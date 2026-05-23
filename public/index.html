@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Executive Control Center</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">ECC</div>
+          <div>
+            <strong>Executive Control Center</strong>
+            <span>TMK Executive OS</span>
+          </div>
+        </div>
+
+        <nav class="nav" id="nav">
+          <button class="active" data-view="dashboard" type="button"><span>▦</span>Главная</button>
+          <button data-view="assignments" type="button"><span>✓</span>Поручения</button>
+          <button data-view="meetings" type="button"><span>□</span>Встречи</button>
+          <button data-view="reports" type="button"><span>▤</span>Отчёты</button>
+          <button data-view="letters" type="button"><span>✉</span>Письма</button>
+          <button data-view="complaints" type="button"><span>!</span>Жалобы</button>
+          <button data-view="documents" type="button"><span>◇</span>Документы</button>
+          <button data-view="departments" type="button"><span>◎</span>Отделы</button>
+          <button data-view="risks" type="button"><span>△</span>Риски</button>
+          <button data-view="control" type="button"><span>◷</span>Контроль</button>
+          <button data-view="tools" type="button"><span>✦</span>AI и модули</button>
+        </nav>
+
+        <div class="sidebar-card">
+          <div class="status-dot"></div>
+          <div>
+            <strong>Backend активен</strong>
+            <span id="backendStatus">Проверка...</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">Markaziy Boshqaruv Paneli</div>
+            <h1 id="pageTitle">Главная панель</h1>
+          </div>
+          <div class="topbar-actions">
+            <label class="search">
+              <span>⌕</span>
+              <input id="searchInput" type="search" placeholder="Поиск по системе" />
+            </label>
+            <button class="icon-button" id="refreshButton" type="button" title="Обновить">↻</button>
+            <button class="primary-button" id="briefButton" type="button">Брифинг</button>
+          </div>
+        </header>
+
+        <section class="view active" data-view="dashboard">
+          <div class="metric-grid" id="metrics"></div>
+          <div class="grid two">
+            <section class="surface wide">
+              <div class="section-head">
+                <div>
+                  <span class="kicker">Для директора</span>
+                  <h2>Ежедневная AI-выжимка</h2>
+                </div>
+                <button class="small-button" data-action="daily-briefing" type="button">Сформировать</button>
+              </div>
+              <div class="briefing" id="briefing"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Задачи на сегодня</h2><button class="small-button" data-jump="assignments">Открыть</button></div>
+              <div class="list" id="todayAssignments"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Просрочено</h2><span class="badge danger" id="overdueCount">0</span></div>
+              <div class="list" id="overdueAssignments"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Встречи сегодня</h2><button class="small-button" data-jump="meetings">Создать</button></div>
+              <div class="list" id="meetingsToday"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Отчёты на проверке</h2><button class="small-button" data-jump="reports">Проверить</button></div>
+              <div class="list" id="pendingReports"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Жалобы и обращения</h2><button class="small-button" data-jump="complaints">Журнал</button></div>
+              <div class="list" id="openComplaints"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Высокие риски</h2><button class="small-button" data-jump="risks">Риски</button></div>
+              <div class="list" id="highRisks"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="assignments">
+          <div class="grid side">
+            <section class="surface wide-table">
+              <div class="section-head">
+                <div>
+                  <span class="kicker">Поручение → задача → ответственный → срок</span>
+                  <h2>Реестр поручений</h2>
+                </div>
+                <div class="segmented" id="assignmentFilters">
+                  <button class="active" data-filter="all" type="button">Все</button>
+                  <button data-filter="today" type="button">Сегодня</button>
+                  <button data-filter="overdue" type="button">Просрочено</button>
+                  <button data-filter="risk" type="button">Риск</button>
+                </div>
+              </div>
+              <div class="table" id="assignmentTable"></div>
+            </section>
+
+            <section class="surface">
+              <div class="section-head"><h2>Новое поручение</h2></div>
+              <form class="form" id="assignmentForm">
+                <label>Название<input name="title" required placeholder="Например: запросить статус отчёта" /></label>
+                <label>Описание<textarea name="description" rows="4"></textarea></label>
+                <label>Источник<select name="source"><option>Поручение директора</option><option>Встреча</option><option>Письмо</option><option>Отчёт</option><option>Звонок</option></select></label>
+                <label>Отдел<select name="departmentId" id="assignmentDepartment"></select></label>
+                <label>Ответственный<select name="ownerId" id="assignmentOwner"></select></label>
+                <label>Дедлайн<input name="dueDate" type="date" required /></label>
+                <div class="columns">
+                  <label>Приоритет<select name="priority"><option>Средний</option><option>Высокий</option><option>Низкий</option></select></label>
+                  <label>Риск<select name="riskLevel"><option>Средний</option><option>Высокий</option><option>Низкий</option></select></label>
+                </div>
+                <button class="primary-button" type="submit">Добавить</button>
+              </form>
+            </section>
+
+            <section class="surface full">
+              <div class="section-head"><h2>Задачи сотрудников</h2><span class="badge" id="employeeTaskCount">0</span></div>
+              <div class="cards" id="employeeTasks"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="meetings">
+          <div class="grid side">
+            <section class="surface">
+              <div class="section-head">
+                <div><span class="kicker">Встреча → протокол → задачи</span><h2>Генератор протокола</h2></div>
+              </div>
+              <form class="form" id="minutesForm">
+                <label>Тема<input name="title" value="Подготовка отчёта по критическому сырью" /></label>
+                <label>Участники<input name="participants" value="Геологический отдел, Финансовый отдел, Юридический отдел" /></label>
+                <label>Заметки встречи<textarea name="notes" rows="9">Сегодня была встреча с геологическим отделом, финансовым отделом и юридическим отделом. Обсудили подготовку отчёта по критическому сырью. Геология должна дать данные до 25 мая. Финансы должны рассчитать бюджет. Юристы должны проверить регуляторные риски.</textarea></label>
+                <button class="primary-button" type="submit">Сформировать протокол и задачи</button>
+              </form>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Итоговый протокол</h2><span class="badge ok">Uzbek Latin</span></div>
+              <pre class="document-output" id="minutesOutput"></pre>
+            </section>
+            <section class="surface full">
+              <div class="section-head"><h2>История встреч</h2><button class="small-button" data-action="meeting-prep" type="button">Подготовка к совещанию</button></div>
+              <div class="cards" id="meetingsList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="reports">
+          <div class="grid side">
+            <section class="surface">
+              <div class="section-head"><div><span class="kicker">Сбор, проверка, экспорт</span><h2>Отчёты</h2></div></div>
+              <div class="cards" id="reportsList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Executive summary</h2><button class="small-button" id="reportSummaryButton" type="button">AI-анализ</button></div>
+              <pre class="document-output" id="reportOutput"></pre>
+              <div class="button-row">
+                <button class="small-button" data-export="html" type="button">HTML</button>
+                <button class="small-button" data-export="json" type="button">JSON</button>
+                <button class="small-button" data-export="csv" type="button">Excel CSV</button>
+              </div>
+            </section>
+            <section class="surface full">
+              <div class="section-head"><h2>Формы отчётов сотрудников</h2><button class="small-button" id="createReportFormButton" type="button">Создать форму</button></div>
+              <div class="cards" id="employeeReportForms"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="letters">
+          <div class="grid side">
+            <section class="surface">
+              <div class="section-head"><div><span class="kicker">Русская инструкция → Uzbek Latin</span><h2>Официальное письмо</h2></div></div>
+              <form class="form" id="letterForm">
+                <label>Адресат<input name="recipient" value="Министерство горнодобывающей промышленности и геологии" /></label>
+                <label>Режим<select name="mode"><option>Черновик</option><option>Готово к отправке</option></select></label>
+                <label>Инструкция<textarea name="instruction" rows="8">Подготовь письмо в Министерство, что нам нужно согласовать отчёт по направлению критического сырья и получить удобное время для рабочей встречи.</textarea></label>
+                <button class="primary-button" type="submit">Сформировать письмо</button>
+              </form>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Готовый текст</h2><button class="small-button" id="gmailDraftButton" type="button">Gmail-черновик</button></div>
+              <pre class="document-output" id="letterOutput"></pre>
+              <div class="quality" id="letterQuality"></div>
+            </section>
+            <section class="surface full">
+              <div class="section-head"><h2>История писем</h2></div>
+              <div class="cards" id="lettersList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="complaints">
+          <div class="grid side">
+            <section class="surface">
+              <div class="section-head"><h2>Новая жалоба или обращение</h2></div>
+              <form class="form" id="complaintForm">
+                <label>Источник<input name="source" value="Внутреннее обращение" /></label>
+                <label>Заявитель<input name="submitter" placeholder="Кто подал обращение" /></label>
+                <label>Тема<input name="title" required /></label>
+                <label>Категория<select name="category"><option>Задержка ответа</option><option>Качество работы отдела</option><option>Техническая проблема</option><option>Организационная проблема</option><option>Предложение по улучшению</option></select></label>
+                <label>Отдел<select name="departmentId" id="complaintDepartment"></select></label>
+                <label>Срочность<select name="urgency"><option>Средняя</option><option>Высокая</option><option>Низкая</option></select></label>
+                <label>Дедлайн ответа<input name="dueDate" type="date" required /></label>
+                <label>Описание<textarea name="description" rows="5"></textarea></label>
+                <button class="primary-button" type="submit">Зарегистрировать</button>
+              </form>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Журнал обращений</h2><button class="small-button" data-action="complaint-report" type="button">Отчёт</button></div>
+              <div class="cards" id="complaintsList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="documents">
+          <div class="grid two">
+            <section class="surface">
+              <div class="section-head"><h2>Документы</h2><button class="small-button" id="createDocumentButton" type="button">Добавить</button></div>
+              <div class="cards" id="documentsList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Google Workspace</h2><button class="small-button" id="driveSearchButton" type="button">Поиск Drive</button></div>
+              <div class="integrations" id="googleStatus"></div>
+              <div class="document-output compact" id="googleOutput"></div>
+            </section>
+            <section class="surface wide">
+              <div class="section-head"><h2>Связанные цепочки</h2></div>
+              <div class="cards" id="workspaceLinks"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="departments">
+          <div class="grid side">
+            <section class="surface">
+              <div class="section-head"><h2>Карта ответственности</h2></div>
+              <div class="cards" id="departmentsList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Генератор запроса в отдел</h2></div>
+              <form class="form" id="departmentRequestForm">
+                <label>Отдел<select name="departmentId" id="requestDepartment"></select></label>
+                <label>Тема<input name="topic" value="расчёт бюджета по проекту" /></label>
+                <label>Что нужно получить<textarea name="needed" rows="4">расчёт бюджета, ключевые допущения и сроки под риском</textarea></label>
+                <label>Срок ответа<input name="dueDate" type="date" required /></label>
+                <button class="primary-button" type="submit">Создать задачу, письмо и форму</button>
+              </form>
+              <pre class="document-output compact" id="departmentRequestOutput"></pre>
+            </section>
+            <section class="surface full">
+              <div class="section-head"><h2>Анализ задержек</h2><button class="small-button" data-action="delay-analysis" type="button">Запустить</button></div>
+              <div class="cards" id="delayAnalysis"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="risks">
+          <div class="grid two">
+            <section class="surface">
+              <div class="section-head"><h2>Реестр рисков</h2><button class="small-button" data-action="risk-ai" type="button">AI-анализ</button></div>
+              <div class="cards" id="risksList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Напоминания</h2><button class="small-button" id="createReminderButton" type="button">Добавить</button></div>
+              <div class="cards" id="remindersList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="control">
+          <div class="grid two">
+            <section class="surface">
+              <div class="section-head"><h2>Согласования</h2></div>
+              <div class="cards" id="approvalsList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Решения</h2></div>
+              <div class="cards" id="decisionsList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>База знаний</h2></div>
+              <div class="cards" id="knowledgeList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>Аудит</h2></div>
+              <div class="audit-list" id="auditList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-view="tools">
+          <div class="grid side">
+            <section class="surface">
+              <div class="section-head"><div><span class="kicker">25 модулей системы</span><h2>Каталог функций</h2></div></div>
+              <div class="module-list" id="moduleList"></div>
+            </section>
+            <section class="surface">
+              <div class="section-head"><h2>AI-ассистент</h2></div>
+              <div class="prompt-row">
+                <button class="small-button" data-prompt="Сделай короткий брифинг для директора">Брифинг</button>
+                <button class="small-button" data-prompt="Найди риски и задержки">Риски</button>
+                <button class="small-button" data-prompt="Подготовь официальное письмо на узбекском латинском">Письмо</button>
+              </div>
+              <div class="chat" id="chat"></div>
+              <form class="assistant-input" id="assistantForm">
+                <input name="prompt" placeholder="Команда на русском" />
+                <button class="primary-button" type="submit">Отправить</button>
+              </form>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </body>
+</html>

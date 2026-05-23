@@ -1,0 +1,19 @@
+{
+  "name": "executive-control-center",
+  "version": "1.0.0",
+  "description": "Executive Control Center / TMK Executive OS full-stack local project",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check backend/api.js && node --check backend/config.js && node --check backend/db.js && node --check backend/seed.js && node --check backend/static.js && node --check backend/services/ai.js && node --check backend/services/googleWorkspace.js && node --check backend/services/exporter.js && node --check backend/services/language.js && node --check public/app.js"
+  },
+  "keywords": [
+    "executive-control-center",
+    "task-management",
+    "assistant-workspace"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}
