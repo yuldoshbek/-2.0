@@ -1,15 +1,17 @@
 import { getDeployStore, getStore } from "@netlify/blobs";
-import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import apiModule from "../../backend/api.js";
+import configModule from "../../backend/config.js";
+import dbModule from "../../backend/db.js";
+import seedModule from "../../backend/seed.js";
 
 export default async (request) => {
-  const require = createRequire(import.meta.url);
-  const { createDatabase } = require("../../backend/db");
-  const { getConfig } = require("../../backend/config");
-  const { handleApiRequest } = require("../../backend/api");
-  const { createSeedData } = require("../../backend/seed");
+  const { handleApiRequest } = apiModule;
+  const { getConfig } = configModule;
+  const { createDatabase } = dbModule;
+  const { createSeedData } = seedModule;
 
   const dataFile = path.join(os.tmpdir(), "executive-control-center", "database.json");
   await hydrateDatabase(dataFile, createSeedData);
