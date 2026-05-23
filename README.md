@@ -54,6 +54,24 @@ Functions directory: netlify/functions
 
 Настройки уже лежат в `netlify.toml`. После подключения репозитория в Netlify каждый push в `main` будет запускать build и публиковать новую версию.
 
+Также добавлен GitHub Actions workflow:
+
+```text
+.github/workflows/netlify-deploy.yml
+```
+
+Он запускается на каждый push в `main`. Чтобы активировать deploy через GitHub Actions, добавьте в GitHub repository secrets:
+
+```text
+NETLIFY_AUTH_TOKEN
+```
+
+Site ID уже прописан:
+
+```text
+3758268a-51b5-4aef-9ca9-d8afe54a1bec
+```
+
 На Netlify backend работает через serverless function:
 
 ```text
