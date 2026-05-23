@@ -40,6 +40,47 @@ http://127.0.0.1:4173
 npm run check
 ```
 
+## Авто-деплой на Netlify
+
+Проект подготовлен для Netlify Continuous Deployment из GitHub:
+
+```text
+Repository: yuldoshbek/-2.0
+Branch: main
+Build command: npm run build
+Publish directory: public
+Functions directory: netlify/functions
+```
+
+Настройки уже лежат в `netlify.toml`. После подключения репозитория в Netlify каждый push в `main` будет запускать build и публиковать новую версию.
+
+На Netlify backend работает через serverless function:
+
+```text
+netlify/functions/api.mjs
+```
+
+Все запросы вида `/api/*` обрабатываются этой функцией. Данные production-версии хранятся в Netlify Blobs store `ecc-data`. Локальная версия по-прежнему использует `data/database.json`.
+
+Локальный Netlify dev-режим:
+
+```powershell
+npm install
+npm run netlify:dev
+```
+
+Для настоящей AI/Google-интеграции добавьте переменные окружения в Netlify Project settings:
+
+```text
+AI_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4.1-mini
+GOOGLE_MODE=live
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=...
+```
+
 ## Основные API
 
 ```text

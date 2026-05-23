@@ -7,7 +7,12 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check backend/api.js && node --check backend/config.js && node --check backend/db.js && node --check backend/seed.js && node --check backend/static.js && node --check backend/services/ai.js && node --check backend/services/googleWorkspace.js && node --check backend/services/exporter.js && node --check backend/services/language.js && node --check public/app.js"
+    "build": "npm run check",
+    "netlify:dev": "netlify dev",
+    "check": "node --check server.js && node --check backend/api.js && node --check backend/config.js && node --check backend/db.js && node --check backend/seed.js && node --check backend/static.js && node --check backend/services/ai.js && node --check backend/services/googleWorkspace.js && node --check backend/services/exporter.js && node --check backend/services/language.js && node --check public/app.js && node --check netlify/functions/api.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^9.1.2"
   },
   "keywords": [
     "executive-control-center",
