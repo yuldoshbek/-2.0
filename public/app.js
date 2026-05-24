@@ -1,12 +1,14 @@
 const state = {
   meta: {},
-  modules: [],
-  dashboard: null,
-  google: null,
+  dashboard: {},
+  google: {},
+  resourceUsage: {},
   collections: {},
-  activeFilter: "all",
   activeView: "dashboard",
+  taskFilter: "all",
   search: "",
+  selectedReportId: null,
+  selectedMeetingId: null,
 };
 
 const collectionNames = [
@@ -28,11 +30,13 @@ const collectionNames = [
   "knowledge-base",
   "approvals",
   "workspace-links",
+  "api-keys",
+  "ai-usage",
   "audit",
 ];
 
-const doneStatuses = new Set(["Готово", "Закрыто", "Утверждено", "Yopildi"]);
-const statusOrder = ["Новая", "В работе", "Ждёт ответ", "Заблокирована", "На проверке", "Готово", "Закрыто", "Просрочена"];
+const doneStatuses = new Set(["Готово", "Закрыто", "Утверждено", "Готово к отправке"]);
+const taskStatuses = ["Новая", "В работе", "Ждёт ответ", "Заблокирована", "На проверке", "Готово", "Закрыто", "Просрочена"];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -40,11 +44,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 document.addEventListener("DOMContentLoaded", () => {
   bindUi();
   setDatePill();
-  loadAll().catch((error) => {
-    console.error(error);
-    toast("Не удалось подключиться к API. Проверьте backend.");
-    setText("backendStatus", "ошибка подключения");
-  });
+  loadAll();
 });
 
 async function api(path, options = {}) {
@@ -54,25 +54,40 @@ async function api(path, options = {}) {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `HTTP ${response.status}`);
+    let message = text || `HTTP ${response.status}`;
+    try {
+      message = JSON.parse(text).error || message;
+    } catch {}
+    throw new Error(message);
   }
   const contentType = response.headers.get("content-type") || "";
-  return contentType.includes("application/json") ? response.json() : response.text();
+  return contentType.includes("application/json") ? response.json() : response.blob();
 }
 
-async function loadAll() {
-  const bootstrap = await api("/api/bootstrap");
-  state.meta = bootstrap.meta || {};
-  state.modules = bootstrap.modules || [];
-  state.dashboard = bootstrap.dashboard || {};
-  state.google = bootstrap.google || null;
+async function loadAll({ silent = false } = {}) {
+  try {
+    if (!silent) setBusy("Загрузка данных...");
+    const bootstrap = await api("/api/bootstrap");
+    state.meta = bootstrap.meta || {};
+    state.dashboard = bootstrap.dashboard || {};
+    state.google = bootstrap.google || {};
+    state.resourceUsage = bootstrap.resourceUsage || {};
 
-  const results = await Promise.all(collectionNames.map((name) => api(`/api/${name}`)));
-  collectionNames.forEach((name, index) => {
-    state.collections[toCamel(name)] = Array.isArray(results[index]) ? results[index] : [];
-  });
+    const results = await Promise.all(collectionNames.map((name) => api(`/api/${name}`)));
+    collectionNames.forEach((name, index) => {
+      state.collections[toCamel(name)] = Array.isArray(results[index]) ? results[index] : [];
+    });
 
-  renderAll();
+    state.selectedReportId ||= state.collections.reports?.[0]?.id || null;
+    state.selectedMeetingId ||= state.collections.meetings?.[0]?.id || null;
+    fillSelects();
+    renderAll();
+    if (!silent) setBusy("");
+  } catch (error) {
+    setBusy("");
+    toast(`Ошибка загрузки: ${error.message}`);
+    setText("backendStatus", "ошибка");
+  }
 }
 
 function bindUi() {
@@ -81,7 +96,7 @@ function bindUi() {
     if (button) showView(button.dataset.view);
   });
 
-  document.body.addEventListener("click", (event) => {
+  document.body.addEventListener("click", async (event) => {
     const jump = event.target.closest("[data-jump]");
     if (jump) {
       showView(jump.dataset.jump);
@@ -90,32 +105,65 @@ function bindUi() {
 
     const promptButton = event.target.closest("[data-prompt]");
     if (promptButton) {
-      runAssistant(promptButton.dataset.prompt);
+      await runAssistant(promptButton.dataset.prompt);
       return;
     }
 
     const action = event.target.closest("[data-action]");
-    if (action) handleAction(action.dataset.action);
+    if (action) {
+      await handleAction(action.dataset.action);
+      return;
+    }
+
+    const edit = event.target.closest("[data-edit]");
+    if (edit) {
+      await editRecord(edit.dataset.edit, edit.dataset.id);
+      return;
+    }
+
+    const del = event.target.closest("[data-delete]");
+    if (del) {
+      await deleteRecord(del.dataset.delete, del.dataset.id);
+      return;
+    }
 
     const report = event.target.closest("[data-report-id]");
     if (report) {
-      summarizeReport(report.dataset.reportId);
-      showView("reports");
+      state.selectedReportId = report.dataset.reportId;
+      renderReportsPage();
+      return;
+    }
+
+    const meeting = event.target.closest("[data-meeting-id]");
+    if (meeting) {
+      state.selectedMeetingId = meeting.dataset.meetingId;
+      renderMeetingsPage();
+      return;
+    }
+
+    const checkKey = event.target.closest("[data-check-key]");
+    if (checkKey) {
+      await checkApiKey(checkKey.dataset.checkKey);
+      return;
+    }
+
+    const exportButton = event.target.closest("[data-export]");
+    if (exportButton) {
+      await exportReport(exportButton.dataset.export);
     }
   });
 
-  $("#assignmentFilters")?.addEventListener("click", (event) => {
+  $("#taskFilters")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-filter]");
     if (!button) return;
-    state.activeFilter = button.dataset.filter;
-    $$("#assignmentFilters button").forEach((item) => item.classList.toggle("active", item === button));
-    renderAssignments();
+    state.taskFilter = button.dataset.filter;
+    $$("#taskFilters button").forEach((item) => item.classList.toggle("active", item === button));
+    renderTasksPage();
   });
 
   $("#searchInput")?.addEventListener("input", (event) => {
     state.search = event.target.value.toLowerCase().trim();
-    renderAssignments();
-    renderPriorityAssignments();
+    renderAll();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -125,663 +173,614 @@ function bindUi() {
     }
   });
 
-  $("#assistantForm")?.addEventListener("submit", (event) => {
+  $("#taskForm")?.addEventListener("submit", submitTask);
+  $("#meetingForm")?.addEventListener("submit", submitMeeting);
+  $("#reportForm")?.addEventListener("submit", submitReport);
+  $("#letterForm")?.addEventListener("submit", submitLetter);
+  $("#documentForm")?.addEventListener("submit", submitDocument);
+  $("#apiKeyForm")?.addEventListener("submit", submitApiKey);
+  $("#assistantForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = event.currentTarget.elements.prompt;
     const prompt = input.value.trim();
     if (!prompt) return;
     input.value = "";
-    runAssistant(prompt);
+    await runAssistant(prompt);
   });
 
-  $("#createButton")?.addEventListener("click", () => handleAction("new-assignment"));
+  $("#taskTable")?.addEventListener("change", async (event) => {
+    const select = event.target.closest("[data-status-id]");
+    if (!select) return;
+    await patchRecord("assignments", select.dataset.statusId, { status: select.value }, "Статус обновлён");
+  });
+
+  $("#createButton")?.addEventListener("click", () => showView("tasks"));
 }
 
 function renderAll() {
-  setText("backendStatus", "API подключён");
-  renderNavigationBadges();
+  renderBadges();
   renderDashboard();
-  renderAssignments();
-  renderSecondaryViews();
-  renderGoogleStatus();
+  renderTasksPage();
+  renderMeetingsPage();
+  renderReportsPage();
+  renderLettersPage();
+  renderDocumentsPage();
+  renderSettingsPage();
 }
 
 function renderDashboard() {
-  renderDirectorBrief();
-  renderKpiGrid();
-  renderPriorityAssignments();
-  renderDepartmentStatus();
-  renderOverdueList();
+  const metrics = getMetrics();
+  setHtml(
+    "dashboardMetrics",
+    [
+      metricCard("Задачи", metrics.activeTasks, "активные"),
+      metricCard("Сегодня", metrics.todayTasks, "срок сегодня"),
+      metricCard("Просрочено", metrics.overdueTasks, "нужна реакция", "danger"),
+      metricCard("Отчёты", metrics.pendingReports, "на проверке"),
+      metricCard("Письма", metrics.draftLetters, "черновики"),
+      metricCard("AI", state.resourceUsage.requests || 0, "запросов"),
+    ].join("")
+  );
+
+  const focus = [
+    ...filteredTasks("overdue").slice(0, 4).map((item) => focusRow("Просрочено", item.title, `${ownerName(item.ownerId)} · ${formatDate(item.dueDate)}`, "danger")),
+    ...meetingsToday().slice(0, 2).map((item) => focusRow("Встреча", item.title, item.time || formatDate(item.date), "info")),
+    ...(state.collections.reports || []).filter((item) => item.status !== "Готов").slice(0, 2).map((item) => focusRow("Отчёт", item.title, item.status, "warn")),
+  ];
+  setHtml("todayFocus", focus.join("") || emptyState("Критичных событий нет. Можно спокойно закрывать план дня."));
+
+  const brief = state.dashboard.briefing?.text || buildLocalBriefing();
+  setHtml("directorBrief", `<div class="brief-text"><p>${escapeHtml(brief)}</p><p>${escapeHtml(nextActionText())}</p></div>`);
   renderMeetingTimeline();
-  renderQueues();
-  renderLetterPreview();
-  renderDocuments();
-  renderActivity();
-  seedAssistantMessage();
+  renderReportsQueue();
+  renderRiskComplaintQueue();
 }
 
-function renderDirectorBrief() {
-  const metrics = getMetrics();
-  const nextMeeting = meetingsToday()[0];
-  const lines = [
-    "Доброе утро!",
-    `На сегодня запланировано ${metrics.meetingsToday} встреч.`,
-    `${metrics.activeAssignments} поручений требуют внимания.`,
-    `${metrics.overdueAssignments} задач просрочены.`,
-    `${metrics.pendingReports} отчётов ожидают проверки.`,
-    `${metrics.openComplaints} жалоб требуют реакции.`,
-    `${metrics.highRisks} риска требуют доклада.`,
-    nextMeeting ? `Подготовьте краткий отчёт к ${nextMeeting.time || "встрече"}.` : "Первый фокус дня - закрыть просрочки и запросить статусы.",
-  ];
-
+function renderTasksPage() {
+  const rows = filteredTasks();
   setHtml(
-    "directorBrief",
-    `<div class="brief-text">${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>`
-  );
-}
-
-function renderKpiGrid() {
-  const metrics = getMetrics();
-  const cards = [
-    ["Поручения", metrics.activeAssignments, "Активные", "+12 за неделю", "blue", "☑"],
-    ["Просрочено", metrics.overdueAssignments, "Критичных", "+3 за день", "red", "⏱"],
-    ["Встречи сегодня", metrics.meetingsToday, "Запланировано", nextMeetingText(), "cyan", "□"],
-    ["Отчёты на проверке", metrics.pendingReports, "Ожидают", "+4 за день", "blue", "▣"],
-    ["Письма в работе", metrics.draftLetters, "Черновиков", `${metrics.lettersToSend} требуют отправки`, "blue", "✉"],
-    ["Жалобы", metrics.openComplaints, "Открытые", `${metrics.urgentComplaints} срочная`, "red", "◇"],
-  ];
-
-  setHtml(
-    "kpiGrid",
-    cards
-      .map(
-        ([title, value, label, trend, tone, icon]) => `
-          <article class="kpi-card ${tone}">
-            <div class="kpi-icon">${icon}</div>
-            <span>${escapeHtml(title)}</span>
-            <strong>${value}</strong>
-            <p>${escapeHtml(label)}</p>
-            <em>${escapeHtml(trend)}</em>
-          </article>
-        `
-      )
-      .join("")
-  );
-}
-
-function renderPriorityAssignments() {
-  const rows = filteredAssignments()
-    .sort(sortByExecutivePriority)
-    .slice(0, 6);
-
-  setHtml(
-    "priorityAssignments",
+    "taskTable",
     `
-      <div class="data-row data-head assignment-grid">
-        <span>Поручение</span><span>Ответственный</span><span>Отдел</span><span>Дедлайн</span><span>Риск</span><span>Статус</span>
-      </div>
-      ${
-        rows
-          .map(
-            (item, index) => `
-              <div class="data-row assignment-grid">
-                <div class="title-cell">
-                  <i class="${isOverdue(item) ? "signal danger" : index < 2 ? "signal warn" : "signal"}"></i>
-                  <strong>${escapeHtml(item.title)}</strong>
-                  <small>${escapeHtml(item.source || "Поручение")}</small>
-                </div>
-                <span>${personWithAvatar(employeeName(item.ownerId), item.ownerId)}</span>
-                <span>${escapeHtml(departmentName(item.departmentId))}</span>
-                <time class="${isOverdue(item) ? "danger-text" : ""}">${formatDate(item.dueDate)}</time>
-                ${badge(item.riskLevel || "Низкий", riskTone(item.riskLevel))}
-                ${badge(item.status || "Новая", statusTone(item.status))}
-              </div>
-            `
-          )
-          .join("") || emptyState("Приоритетных поручений нет.")
-      }
-    `
-  );
-}
-
-function renderDepartmentStatus() {
-  const departments = state.collections.departments || [];
-  const assignments = state.collections.assignments || [];
-  const tasks = state.collections.employeeTasks || [];
-  const reports = state.collections.reports || [];
-
-  const rows = departments.slice(1, 7).map((department) => {
-    const departmentAssignments = assignments.filter((item) => item.departmentId === department.id);
-    const departmentTasks = tasks.filter((item) => item.departmentId === department.id);
-    const overdue = departmentAssignments.filter(isOverdue).length;
-    const reportCount = reports.filter((item) => item.ownerDepartmentId === department.id).length;
-    const rate = Number(department.responseRate || 0);
-    return { department, taskCount: departmentAssignments.length + departmentTasks.length, overdue, reportCount, rate };
-  });
-
-  setHtml(
-    "departmentStatus",
-    `
-      <div class="department-row department-head"><span>Отдел</span><span>Задачи</span><span>Просрочено</span><span>Отчёты</span></div>
-      ${rows
-        .map(
-          ({ department, taskCount, overdue, reportCount, rate }) => `
-            <div class="department-row">
-              <strong>${escapeHtml(department.name)}</strong>
-              <span>${taskCount}</span>
-              <span class="${overdue ? "danger-text" : ""}">${overdue}</span>
-              <span class="rate-cell"><i class="ring" style="--rate:${rate}"></i>${Math.max(rate, reportCount ? rate : 60)}%</span>
-            </div>
-          `
-        )
-        .join("")}
-    `
-  );
-}
-
-function renderOverdueList() {
-  const overdue = filteredAssignments("overdue").slice(0, 5);
-  setHtml(
-    "overdueList",
-    overdue
-      .map(
-        (item) => `
-          <div class="compact-row">
-            <strong>${escapeHtml(item.title)}</strong>
-            <span>${personWithAvatar(employeeName(item.ownerId), item.ownerId)}</span>
-            <b>${daysOverdue(item.dueDate)} дн.</b>
-          </div>
-        `
-      )
-      .join("") || emptyState("Просроченных задач нет.")
-  );
-}
-
-function renderMeetingTimeline() {
-  const meetings = meetingsToday().length ? meetingsToday() : (state.collections.meetings || []).slice(0, 4);
-  setHtml(
-    "meetingTimeline",
-    meetings
-      .map(
-        (meeting) => `
-          <div class="meeting-row">
-            <time>${meeting.time || "09:00"}</time>
-            <div>
-              <strong>${escapeHtml(meeting.title)}</strong>
-              <span>${escapeHtml((meeting.agenda || []).slice(0, 2).join(", ") || meeting.status || "Рабочая встреча")}</span>
-            </div>
-            <div class="avatars">${meetingAvatars(meeting)}</div>
-          </div>
-        `
-      )
-      .join("") || emptyState("На сегодня встреч нет.")
-  );
-}
-
-function renderQueues() {
-  const reports = (state.collections.reports || []).filter((item) => item.status !== "Готов").slice(0, 4);
-  const complaints = (state.collections.complaints || []).filter((item) => item.status !== "Закрыто").slice(0, 4);
-  const approvals = state.collections.approvals || [];
-
-  setHtml("reportsQueue", reports.map((item) => queueRow(item.title, departmentName(item.ownerDepartmentId), item.status, statusTone(item.status))).join("") || emptyState("Нет отчётов на проверке."));
-  setHtml("complaintsQueue", complaints.map((item) => queueRow(`#${item.id}`, item.title, item.status, item.urgency === "Высокая" ? "danger" : "warn")).join("") || emptyState("Нет открытых жалоб."));
-  setHtml("approvalQueue", approvals.map((item) => queueRow(targetTitle(item), item.reviewer || "Проверяющий", item.status, statusTone(item.status))).join("") || emptyState("Нет документов на согласовании."));
-}
-
-function renderLetterPreview() {
-  const letter = (state.collections.letters || [])[0];
-  const text = letter?.bodyUz || "Hurmatli hamkasblar,\n\nRasmiy xat matni AI orqali tayyorlangach shu yerda ko‘rinadi.\n\nHurmat bilan,\nBosh direktor yordamchisi";
-  const preview = `${text}\n\n[${letter?.status || "Черновик"}]`;
-  setText("letterPreview", preview);
-}
-
-function renderDocuments() {
-  const documents = (state.collections.documents || []).slice(0, 5);
-  setHtml(
-    "documentList",
-    documents
-      .map(
-        (document) => `
-          <div class="document-row">
-            <span>${documentIcon(document.type)}</span>
-            <strong>${escapeHtml(document.title)}</strong>
-            <time>${escapeHtml(document.status || "Черновик")}</time>
-          </div>
-        `
-      )
-      .join("") || emptyState("Документы не загружены.")
-  );
-}
-
-function renderActivity() {
-  const audit = (state.collections.audit || []).slice(-6);
-  const fallback = [
-    ["Создано поручение", "Петров П.П.", "09:12", "☑"],
-    ["Изменён статус задачи", "Иванов И.И.", "09:45", "◉"],
-    ["Загружен документ", "Юлдашева М.М.", "10:02", "▣"],
-    ["Создан черновик письма", "Сидорова А.А.", "10:15", "✉"],
-    ["Отчёт отправлен", "Ким Д.В.", "10:30", "□"],
-    ["Жалоба зарегистрирована", "Юлдашева М.М.", "10:45", "◇"],
-  ];
-  const items = audit.length > 1 ? audit.map((item) => [translateAudit(item.action), actorName(item.actor), formatTime(item.at), "◉"]) : fallback;
-
-  setHtml(
-    "activityTimeline",
-    items
-      .map(
-        ([title, actor, time, icon]) => `
-          <div class="activity-item">
-            <span class="activity-icon">${icon}</span>
-            <strong>${escapeHtml(title)}</strong>
-            <em>${escapeHtml(actor)}</em>
-            <time>${escapeHtml(time)}</time>
-          </div>
-        `
-      )
-      .join("")
-  );
-}
-
-function renderAssignments() {
-  const rows = filteredAssignments();
-  setHtml(
-    "assignmentTable",
-    `
-      <div class="data-row data-head assignment-page-grid">
-        <span>Поручение</span><span>Источник</span><span>Ответственный</span><span>Отдел</span><span>Срок</span><span>Приоритет</span><span>Риск</span><span>Статус</span>
+      <div class="data-row data-head simple-task-grid">
+        <span>Задача</span><span>Ответственный</span><span>Отдел</span><span>Срок</span><span>Приоритет</span><span>Статус</span><span></span>
       </div>
       ${
         rows
           .map(
             (item) => `
-              <div class="data-row assignment-page-grid">
-                <div class="title-cell"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.description || "")}</small></div>
-                <span>${escapeHtml(item.source || "")}</span>
-                <span>${personWithAvatar(employeeName(item.ownerId), item.ownerId)}</span>
+              <div class="data-row simple-task-grid">
+                <div class="title-cell"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.source || item.description || "Личная задача")}</small></div>
+                <span>${person(ownerName(item.ownerId))}</span>
                 <span>${escapeHtml(departmentName(item.departmentId))}</span>
                 <time class="${isOverdue(item) ? "danger-text" : ""}">${formatDate(item.dueDate)}</time>
                 ${badge(item.priority || "Средний", priorityTone(item.priority))}
-                ${badge(item.riskLevel || "Низкий", riskTone(item.riskLevel))}
-                <select data-status-id="${escapeHtml(item.id)}">${statusOrder.map((status) => `<option ${status === item.status ? "selected" : ""}>${status}</option>`).join("")}</select>
+                <select data-status-id="${escapeHtml(item.id)}">${taskStatuses.map((status) => `<option ${status === item.status ? "selected" : ""}>${status}</option>`).join("")}</select>
+                <span class="row-actions"><button data-edit="assignments" data-id="${escapeHtml(item.id)}" type="button">Edit</button><button data-delete="assignments" data-id="${escapeHtml(item.id)}" type="button">Del</button></span>
               </div>
             `
           )
-          .join("") || emptyState("Поручения по выбранному фильтру не найдены.")
+          .join("") || emptyState("Задач по фильтру нет.")
       }
     `
   );
-}
 
-function renderSecondaryViews() {
-  renderCardGrid("employeeTasks", state.collections.employeeTasks, (task) => card("Задача", task.title, `${employeeName(task.employeeId)} · ${departmentName(task.departmentId)} · ${formatDate(task.dueDate)}`, [task.status, task.priority]));
-  renderMeetingsPage();
-  renderReportsPage();
-  renderLettersPage();
-  renderCardGrid("complaintsList", state.collections.complaints, (item) => card(item.category || "Жалоба", item.title, `${departmentName(item.departmentId)} · срок ${formatDate(item.dueDate)}`, [item.status, item.urgency]));
-  renderCardGrid("documentsList", state.collections.documents, (item) => card(item.type || "Документ", item.title, `${item.status} · ${(item.tags || []).join(", ")}`, [item.status]));
-  renderCardGrid("decisionsList", state.collections.decisions, (item) => card("Решение", item.description, `${item.source} · срок ${formatDate(item.dueDate)}`, [item.status]));
-  renderCardGrid("risksList", state.collections.risks, (item) => card(item.source || "Риск", item.title, `Вероятность ${item.probability}% · влияние ${item.impact}%`, [item.level, item.status]));
-  renderCardGrid("remindersList", state.collections.reminders, (item) => card(item.channel || "Напоминание", item.title, formatDate((item.dueAt || "").slice(0, 10)), [item.status]));
-  renderDepartmentsPage();
-  renderEmployeesPage();
-  renderCardGrid("knowledgeList", state.collections.knowledgeBase, (item) => card(item.category || "База знаний", item.title, (item.tags || []).join(", "), []));
-  renderAuditPage();
-  renderCardGrid("approvalsList", state.collections.approvals, (item) => card(item.targetType || "Согласование", targetTitle(item), item.reviewer || "Проверяющий", [item.status]));
+  const complaints = (state.collections.complaints || []).filter(matchesSearch).slice(0, 6);
+  const reminders = (state.collections.reminders || []).slice(0, 6);
+  setHtml("complaintsList", complaints.map((item) => queueRow(item.title, `${departmentName(item.departmentId)} · ${formatDate(item.dueDate)}`, item.status, item.urgency === "Высокая" ? "danger" : "warn")).join("") || emptyState("Жалоб нет."));
+  setHtml("remindersList", reminders.map((item) => queueRow(item.title, formatDate((item.dueAt || "").slice(0, 10)), item.status, "info")).join("") || emptyState("Напоминаний нет."));
 }
 
 function renderMeetingsPage() {
-  renderCardGrid("meetingsList", state.collections.meetings, (meeting) => card(meeting.time || "Встреча", meeting.title, `${formatDate(meeting.date)} · ${(meeting.agenda || []).join(", ")}`, [meeting.status]));
-  const minutes = (state.collections.meetingMinutes || [])[0];
-  const meeting = (state.collections.meetings || [])[0];
-  const output = minutes?.protocolUz || buildMeetingPreview(meeting);
-  setText("minutesOutput", output);
+  const meetings = (state.collections.meetings || []).filter(matchesSearch).sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
+  setHtml(
+    "meetingsList",
+    meetings
+      .map(
+        (item) => `
+          <button class="card as-button ${state.selectedMeetingId === item.id ? "selected" : ""}" data-meeting-id="${escapeHtml(item.id)}" type="button">
+            <span>${formatDate(item.date)} ${escapeHtml(item.time || "")}</span>
+            <strong>${escapeHtml(item.title)}</strong>
+            <p>${escapeHtml((item.agenda || []).join(", ") || item.status || "Встреча")}</p>
+            <div>${badge(item.status || "Запланирована", statusTone(item.status))}</div>
+          </button>
+        `
+      )
+      .join("") || emptyState("Встреч пока нет.")
+  );
+  const minute = (state.collections.meetingMinutes || []).find((item) => item.meetingId === state.selectedMeetingId) || (state.collections.meetingMinutes || [])[0];
+  const meeting = meetings.find((item) => item.id === state.selectedMeetingId) || meetings[0];
+  setText("minutesOutput", minute?.protocolUz || buildMeetingPreview(meeting));
 }
 
 function renderReportsPage() {
-  renderCardGrid("reportsList", state.collections.reports, (report) => `
-    <button class="card as-button" data-report-id="${escapeHtml(report.id)}" type="button">
-      <span>${escapeHtml(report.type || "Отчёт")}</span>
-      <strong>${escapeHtml(report.title)}</strong>
-      <p>${departmentName(report.ownerDepartmentId)} · готовность ${report.completeness || 0}%</p>
-      <div>${badge(report.status, statusTone(report.status))}</div>
-    </button>
-  `);
-  const report = (state.collections.reports || [])[0];
-  setText("reportOutput", buildReportPreview(report));
+  const reports = (state.collections.reports || []).filter(matchesSearch);
+  const selected = reports.find((item) => item.id === state.selectedReportId) || reports[0];
+  state.selectedReportId = selected?.id || null;
+  setHtml(
+    "reportsList",
+    reports
+      .map(
+        (item) => `
+          <article class="card as-button ${state.selectedReportId === item.id ? "selected" : ""}" data-report-id="${escapeHtml(item.id)}">
+            <span>${escapeHtml(item.type || "Отчёт")}</span>
+            <strong>${escapeHtml(item.title)}</strong>
+            <p>${departmentName(item.ownerDepartmentId)} · готовность ${item.completeness || 0}%</p>
+            <div>${badge(item.status || "Черновик", statusTone(item.status))}<span class="row-actions"><button data-edit="reports" data-id="${escapeHtml(item.id)}" type="button">Edit</button><button data-delete="reports" data-id="${escapeHtml(item.id)}" type="button">Del</button></span></div>
+          </article>
+        `
+      )
+      .join("") || emptyState("Отчётов пока нет.")
+  );
+  setText("reportOutput", selected ? selected.summary || selected.content || buildReportPreview(selected) : "Выберите отчёт или создайте новый.");
+  renderReportTemplates();
 }
 
 function renderLettersPage() {
-  renderCardGrid("lettersList", state.collections.letters, (letter) => card(letter.recipient || "Адресат", letter.subject, formatDate((letter.createdAt || "").slice(0, 10)), [letter.status]));
-  setText("letterOutput", (state.collections.letters || [])[0]?.bodyUz || "");
-}
-
-function renderDepartmentsPage() {
-  const departments = state.collections.departments || [];
-  renderCardGrid("departmentsList", departments, (department) => {
-    const tasks = (state.collections.assignments || []).filter((item) => item.departmentId === department.id);
-    const overdue = tasks.filter(isOverdue).length;
-    return card(department.head || "Руководитель отдела", department.name, `Задач: ${tasks.length} · просрочено: ${overdue} · исполнительность ${department.responseRate || 0}%`, [overdue ? "Есть риск" : "Стабильно"]);
-  });
-}
-
-function renderEmployeesPage() {
-  renderCardGrid("employeesList", state.collections.employees, (employee) => card(employee.role || "Сотрудник", employee.name, `${departmentName(employee.departmentId)} · ответ ${employee.responseScore || 0}%`, [employee.responseScore >= 80 ? "Сильный ответ" : "Контроль"]));
-}
-
-function renderAuditPage() {
-  const audit = state.collections.audit || [];
+  const letters = (state.collections.letters || []).filter(matchesSearch).slice().reverse();
+  const first = letters[0] || (state.collections.letters || [])[0];
+  setText("letterOutput", first?.bodyUz || "Сгенерированное письмо появится здесь.");
   setHtml(
-    "auditList",
-    audit
-      .slice()
-      .reverse()
-      .map(
-        (item) => `
-          <div class="audit-row">
-            <time>${formatDateTime(item.at)}</time>
-            <strong>${escapeHtml(translateAudit(item.action))}</strong>
-            <span>${escapeHtml(actorName(item.actor))}</span>
-            <p>${escapeHtml(item.detail || item.entityType || "")}</p>
-          </div>
-        `
-      )
-      .join("") || emptyState("Журнал аудита пока пуст.")
+    "lettersList",
+    letters
+      .map((item) => card(item.recipient || "Адресат", item.subject || "Письмо", `${formatDate((item.createdAt || "").slice(0, 10))} · ${item.status || "Черновик"}`, [item.status || "Черновик"], "letters", item.id))
+      .join("") || emptyState("Писем пока нет.")
+  );
+}
+
+function renderDocumentsPage() {
+  const docs = (state.collections.documents || []).filter(matchesSearch);
+  const knowledge = (state.collections.knowledgeBase || []).filter(matchesSearch);
+  setHtml("documentsList", docs.map((item) => card(item.type || "Документ", item.title, `${item.status || "Черновик"} · ${(item.tags || []).join(", ")}`, [item.status], "documents", item.id)).join("") || emptyState("Документов нет."));
+  setHtml("knowledgeList", knowledge.map((item) => card(item.category || "База знаний", item.title, (item.tags || []).join(", "), [], "knowledge-base", item.id)).join("") || emptyState("Записей базы знаний нет."));
+}
+
+function renderSettingsPage() {
+  renderGoogleStatus();
+  renderApiKeys();
+  renderResourceUsage();
+  renderAudit();
+}
+
+function renderMeetingTimeline() {
+  const meetings = meetingsToday().length ? meetingsToday() : (state.collections.meetings || []).slice(0, 4);
+  setHtml("meetingTimeline", meetings.map((item) => queueRow(item.title, `${item.time || ""} · ${formatDate(item.date)}`, item.status || "Запланирована", "info")).join("") || emptyState("Сегодня встреч нет."));
+}
+
+function renderReportsQueue() {
+  const reports = (state.collections.reports || []).filter((item) => item.status !== "Готов").slice(0, 5);
+  setHtml("reportsQueue", reports.map((item) => queueRow(item.title, `${item.completeness || 0}% · ${departmentName(item.ownerDepartmentId)}`, item.status, statusTone(item.status))).join("") || emptyState("Нет отчётов на проверке."));
+}
+
+function renderRiskComplaintQueue() {
+  const risks = (state.collections.risks || []).filter((item) => item.status !== "Закрыт").slice(0, 3);
+  const complaints = (state.collections.complaints || []).filter((item) => item.status !== "Закрыто").slice(0, 3);
+  const rows = [
+    ...risks.map((item) => queueRow(item.title, item.actionPlan || item.source, item.level, riskTone(item.level))),
+    ...complaints.map((item) => queueRow(item.title, departmentName(item.departmentId), item.status, item.urgency === "Высокая" ? "danger" : "warn")),
+  ];
+  setHtml("riskComplaintQueue", rows.join("") || emptyState("Рисков и жалоб нет."));
+}
+
+function renderReportTemplates() {
+  const templates = state.collections.reportTemplates || [];
+  const forms = state.collections.employeeReportForms || [];
+  setHtml(
+    "reportTemplatesList",
+    [
+      ...templates.map((item) => compactItem(item.title, (item.blocks || []).join(", "))),
+      ...forms.map((item) => compactItem(item.title, `${departmentName(item.departmentId)} · ${formatDate(item.deadline)}`)),
+    ].join("") || emptyState("Шаблонов нет.")
   );
 }
 
 function renderGoogleStatus() {
   const google = state.google || {};
-  const integrations = [
+  const items = [
     ["Google Calendar", google.calendar],
     ["Gmail", google.gmail],
     ["Google Docs", google.docs],
     ["Google Sheets", google.sheets],
     ["Google Drive", google.drive],
   ];
+  setText("backendStatus", "API работает");
+  setHtml("googleStatus", items.map(([name, ok]) => `<span>${escapeHtml(name)}: <b>${ok ? "подключено" : "mock"}</b></span>`).join(""));
+}
+
+function renderApiKeys() {
+  const keys = state.collections.apiKeys || [];
   setHtml(
-    "googleStatus",
-    integrations
-      .map(([name, value]) => `<span>${escapeHtml(name)}: <b>${value ? "подключено" : "mock-режим"}</b></span>`)
-      .join("")
+    "apiKeysList",
+    keys
+      .map(
+        (item) => `
+          <div class="compact-item">
+            <div><strong>${escapeHtml(item.name || item.provider)}</strong><span>${escapeHtml(item.provider)} · ${escapeHtml(item.maskedKey || "без ключа")} · ${escapeHtml(item.validationStatus || "unchecked")}</span></div>
+            <span class="row-actions"><button data-check-key="${escapeHtml(item.id)}" type="button">Check</button><button data-delete="api-keys" data-id="${escapeHtml(item.id)}" type="button">Del</button></span>
+          </div>
+        `
+      )
+      .join("") || emptyState("API-ключи не добавлены. Можно работать в mock-режиме.")
   );
 }
 
-function renderNavigationBadges() {
-  const metrics = getMetrics();
-  setBadge("navAssignments", metrics.activeAssignments);
-  setBadge("navReports", metrics.pendingReports);
-  setBadge("navLetters", metrics.draftLetters);
-  setBadge("navComplaints", metrics.openComplaints);
-  setBadge("navRisks", metrics.highRisks);
-  setBadge("navApprovals", (state.collections.approvals || []).filter((item) => item.status !== "Утверждено").length);
-  setText("notificationCount", metrics.overdueAssignments + metrics.highRisks + metrics.openComplaints);
+function renderResourceUsage() {
+  const usage = state.resourceUsage || {};
+  const warnings = usage.warnings || [];
+  setHtml(
+    "resourceUsage",
+    `
+      <div class="usage-grid">
+        ${metricCard("AI-запросы", usage.requests || 0, "всего")}
+        ${metricCard("Токены", usage.totalTokens || 0, "примерно")}
+        ${metricCard("Расход", `$${Number(usage.costUsd || 0).toFixed(4)}`, "оценка")}
+        ${metricCard("Ошибки", usage.errors || 0, "AI", usage.errors ? "danger" : "")}
+      </div>
+      <p class="muted">Активный ключ: ${escapeHtml(usage.activeKey?.name || "не выбран")}</p>
+      ${warnings.length ? `<div class="warning-list">${warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>` : ""}
+      <div class="compact-stack">${(usage.history || []).slice(0, 8).map((item) => compactItem(`${item.task} · ${item.status}`, `${item.totalTokens} tokens · ${formatDateTime(item.at)}`)).join("") || emptyState("История AI-запросов пока пуста.")}</div>
+    `
+  );
 }
 
-function getMetrics() {
-  const assignments = state.collections.assignments || [];
-  const reports = state.collections.reports || [];
-  const letters = state.collections.letters || [];
-  const complaints = state.collections.complaints || [];
-  const risks = state.collections.risks || [];
-  const activeAssignments = assignments.filter((item) => !isDone(item.status)).length;
-  const overdueAssignments = assignments.filter(isOverdue).length;
-  const pendingReports = reports.filter((item) => item.status !== "Готов").length;
-  const draftLetters = letters.filter((item) => item.status !== "Готово к отправке").length;
-  const lettersToSend = letters.filter((item) => item.status === "Готово к отправке").length;
-  const openComplaints = complaints.filter((item) => item.status !== "Закрыто").length;
-  const urgentComplaints = complaints.filter((item) => item.urgency === "Высокая").length;
-  const highRisks = risks.filter((item) => item.level === "Высокий" && item.status !== "Закрыт").length;
-  return { activeAssignments, overdueAssignments, pendingReports, draftLetters, lettersToSend, openComplaints, urgentComplaints, highRisks, meetingsToday: meetingsToday().length };
+function renderAudit() {
+  const audit = (state.collections.audit || []).slice().reverse().slice(0, 12);
+  setHtml("auditList", audit.map((item) => `<div class="audit-row"><time>${formatDateTime(item.at)}</time><strong>${escapeHtml(item.action)}</strong><span>${escapeHtml(item.entityType || "")}</span><p>${escapeHtml(item.detail || "")}</p></div>`).join("") || emptyState("Аудит пуст."));
 }
 
-function filteredAssignments(forceFilter) {
-  const assignments = state.collections.assignments || [];
-  const filter = forceFilter || state.activeFilter;
-  const today = todayISO();
-  return assignments.filter((item) => {
-    const haystack = [item.title, item.description, item.source, departmentName(item.departmentId), employeeName(item.ownerId), item.status, item.priority, item.riskLevel].join(" ").toLowerCase();
-    if (state.search && !haystack.includes(state.search)) return false;
-    if (filter === "today") return item.dueDate === today;
-    if (filter === "overdue") return isOverdue(item);
-    if (filter === "risk") return item.riskLevel === "Высокий" || item.priority === "Высокий";
-    return true;
-  });
+async function submitTask(event) {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  await createRecord("assignments", {
+    ...data,
+    source: "Личная система",
+    status: "Новая",
+    riskLevel: data.priority === "Высокий" ? "Средний" : "Низкий",
+    description: "",
+    comments: [],
+    related: {},
+  }, "Задача создана");
+  event.currentTarget.reset();
+  fillSelects();
 }
 
-function meetingsToday() {
-  const today = todayISO();
-  return (state.collections.meetings || []).filter((item) => item.date === today);
+async function submitMeeting(event) {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  await createRecord("meetings", {
+    ...data,
+    agenda: data.notes ? [data.notes.slice(0, 80)] : [],
+    participants: [],
+    documentIds: [],
+    status: "Запланирована",
+  }, "Встреча сохранена");
+  event.currentTarget.reset();
 }
 
-function showView(view) {
-  state.activeView = view;
-  $$(".view").forEach((section) => section.classList.toggle("active", section.dataset.view === view));
-  $$("#nav [data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  window.scrollTo({ top: 0, behavior: "smooth" });
+async function submitReport(event) {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  await createRecord("reports", {
+    title: data.title,
+    type: data.type || "Отчёт для директора",
+    content: data.content || "",
+    ownerDepartmentId: "D-000",
+    status: "Черновик",
+    completeness: data.content ? 70 : 20,
+    missing: [],
+    summary: "",
+  }, "Отчёт сохранён");
+  event.currentTarget.reset();
+}
+
+async function submitLetter(event) {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  setStatus("aiRunStatus", "выполняется");
+  try {
+    const result = await api("/api/ai/letter", { method: "POST", body: JSON.stringify(data) });
+    const bodyUz = result.bodyUz || result.text || "";
+    setText("letterOutput", bodyUz);
+    await createRecord("letters", {
+      recipient: data.recipient,
+      subject: data.subject || result.subject || "Rasmiy xat",
+      instruction: data.instruction,
+      bodyUz,
+      status: "Черновик",
+    }, "Письмо создано", { silent: true });
+    setStatus("aiRunStatus", "готов");
+    await refreshUsage();
+    renderLettersPage();
+    toast("Письмо подготовлено и сохранено.");
+  } catch (error) {
+    setStatus("aiRunStatus", "ошибка");
+    toast(`AI ошибка: ${error.message}`);
+  }
+}
+
+async function submitDocument(event) {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  await createRecord("documents", { ...data, tags: [], linked: {}, versions: [] }, "Документ сохранён");
+  event.currentTarget.reset();
+}
+
+async function submitApiKey(event) {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  await createRecord("api-keys", data, "API-ключ сохранён");
+  event.currentTarget.reset();
+  await refreshUsage();
 }
 
 async function handleAction(action) {
-  if (action === "daily-briefing") {
-    await runAssistant("Подготовь краткий ежедневный брифинг для директора");
-    return;
-  }
+  if (action === "refresh") return loadAll();
+  if (action === "new-task") return showView("tasks");
+  if (action === "new-report") return showView("reports");
+  if (action === "new-letter") return showView("letters");
+  if (action === "new-document") return showView("documents");
+  if (action === "daily-briefing") return runAssistant("Сделай краткий брифинг дня для директора");
+  if (action === "delay-analysis") return runAssistant("Покажи просроченные задачи и причины задержек");
+  if (action === "report-summary") return summarizeReport();
+  if (action === "import-template") return importReportTemplate();
+  if (action === "generate-minutes") return generateMinutes();
+  if (action === "meeting-prep") return runAssistant("Подготовь справку к ближайшему совещанию");
+  if (action === "department-request") return createDepartmentRequest();
+  if (action === "gmail-draft") return createGmailDraft();
+  if (action === "refresh-google") return refreshGoogle();
+  if (action === "refresh-usage") return refreshUsage();
+}
 
-  if (action === "department-request") {
-    try {
-      toast("Создаю запрос в отдел...");
-      const department = (state.collections.departments || []).find((item) => item.id !== "D-000") || {};
-      await api("/api/workflows/department-request", {
-        method: "POST",
-        body: JSON.stringify({
-          departmentId: department.id,
-          departmentName: department.name || "Отдел",
-          topic: "Расчёт бюджета по проекту",
-          needed: "Предоставить расчёт бюджета, риски и срок готовности.",
-          dueDate: todayISO(2),
-          priority: "Высокий",
-        }),
-      });
-      await loadAll();
-      toast("Запрос, задача, письмо и напоминание созданы.");
-    } catch (error) {
-      toast(`Не удалось создать запрос: ${error.message}`);
-    }
-    return;
+async function createRecord(collection, payload, success, options = {}) {
+  try {
+    await api(`/api/${collection}`, { method: "POST", body: JSON.stringify(payload) });
+    await loadAll({ silent: true });
+    if (!options.silent) toast(success);
+  } catch (error) {
+    toast(`Не сохранено: ${error.message}`);
   }
+}
 
-  if (action === "new-letter") {
-    await runAssistant("Подготовь письмо в Министерство о согласовании отчёта по критическому сырью на узбекском латинском");
-    showView("letters");
-    return;
+async function patchRecord(collection, id, payload, success) {
+  try {
+    const updated = await api(`/api/${collection}/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+    const key = toCamel(collection);
+    const list = state.collections[key] || [];
+    const index = list.findIndex((item) => item.id === id);
+    if (index !== -1) list[index] = updated;
+    renderAll();
+    toast(success);
+  } catch (error) {
+    toast(`Не обновлено: ${error.message}`);
   }
+}
 
-  if (action === "new-meeting") {
-    showView("meetings");
-    toast("Открыл модуль встреч. Здесь будут повестка, протокол и задачи.");
-    return;
+async function deleteRecord(collection, id) {
+  if (!window.confirm("Удалить запись?")) return;
+  try {
+    await api(`/api/${collection}/${id}`, { method: "DELETE" });
+    await loadAll({ silent: true });
+    toast("Удалено");
+  } catch (error) {
+    toast(`Не удалено: ${error.message}`);
   }
+}
 
-  if (action === "new-document") {
-    showView("documents");
-    toast("Открыл документы и Google Workspace.");
-    return;
-  }
-
-  showView("assignments");
-  toast("Открыл контроль поручений.");
+async function editRecord(collection, id) {
+  const key = toCamel(collection);
+  const item = (state.collections[key] || []).find((record) => record.id === id);
+  if (!item) return;
+  const title = window.prompt("Название", item.title || item.subject || "");
+  if (title === null || !title.trim()) return;
+  await patchRecord(collection, id, item.subject !== undefined ? { subject: title } : { title }, "Изменено");
 }
 
 async function runAssistant(prompt) {
   addChat("user", prompt);
+  setStatus("aiRunStatus", "выполняется");
+  setStatus("aiBriefStatus", "выполняется");
   try {
-    let result;
     const lower = prompt.toLowerCase();
-    if (lower.includes("пись") || lower.includes("министер") || lower.includes("uzbek")) {
-      result = await api("/api/ai/letter", {
-        method: "POST",
-        body: JSON.stringify({
-          instruction: prompt,
-          recipient: "Vazirlik",
-          subject: "Hisobotni kelishish yuzasidan",
-        }),
-      });
-      const text = result.bodyUz || result.text || JSON.stringify(result, null, 2);
-      setText("letterPreview", `${text}\n\n[AI черновик]`);
-      setText("letterOutput", text);
-      addChat("assistant", text);
-      return;
-    }
-
-    if (lower.includes("риск")) {
+    let result;
+    if (lower.includes("пись") || lower.includes("uzbek") || lower.includes("узбек")) {
+      result = await api("/api/ai/letter", { method: "POST", body: JSON.stringify({ instruction: prompt, recipient: "Hamkasblar" }) });
+      addChat("assistant", result.bodyUz || result.text || stringify(result));
+    } else if (lower.includes("риск")) {
       result = await api("/api/ai/risks", { method: "POST", body: JSON.stringify({ prompt }) });
-      addChat("assistant", result.recommendation || result.text || stringifyResult(result));
-      return;
+      addChat("assistant", result.recommendation || stringify(result));
+    } else {
+      result = await api("/api/workflows/daily-briefing", { method: "POST", body: JSON.stringify({ prompt }) });
+      addChat("assistant", result.directorText || result.text || stringify(result));
+      setHtml("directorBrief", `<div class="brief-text"><p>${escapeHtml(result.directorText || "")}</p></div>`);
     }
-
-    if (lower.includes("просроч")) {
-      const overdue = filteredAssignments("overdue");
-      addChat("assistant", overdue.length ? overdue.map((item) => `${item.title} - ${employeeName(item.ownerId)}, ${daysOverdue(item.dueDate)} дн.`).join("\n") : "Просроченных поручений нет.");
-      return;
-    }
-
-    result = await api("/api/workflows/daily-briefing", { method: "POST", body: JSON.stringify({ prompt }) });
-    addChat("assistant", result.directorText || result.text || stringifyResult(result));
+    setStatus("aiRunStatus", "готов");
+    setStatus("aiBriefStatus", "готов");
+    await refreshUsage();
   } catch (error) {
-    addChat("assistant", `Команда не выполнена: ${error.message}`);
+    setStatus("aiRunStatus", "ошибка");
+    setStatus("aiBriefStatus", "ошибка");
+    addChat("assistant", `Ошибка: ${error.message}`);
   }
 }
 
-async function summarizeReport(reportId) {
+async function summarizeReport() {
+  const id = state.selectedReportId;
+  if (!id) return toast("Сначала выберите отчёт.");
+  setStatus("aiRunStatus", "выполняется");
   try {
-    const result = await api("/api/ai/reportSummary", { method: "POST", body: JSON.stringify({ reportId }) });
-    setText("reportOutput", result.summaryUz || stringifyResult(result));
-    toast("Executive summary сформирован.");
+    const result = await api("/api/ai/reportSummary", { method: "POST", body: JSON.stringify({ reportId: id }) });
+    setText("reportOutput", result.summaryUz || stringify(result));
+    await patchRecord("reports", id, { summary: result.summaryUz || stringify(result), status: "На проверке", completeness: 90 }, "AI-выжимка сохранена");
+    await refreshUsage();
   } catch (error) {
-    toast(`Не удалось сформировать отчёт: ${error.message}`);
+    toast(`AI-выжимка не готова: ${error.message}`);
+  } finally {
+    setStatus("aiRunStatus", "готов");
   }
 }
 
-function addChat(role, text) {
-  const html = `<div class="message ${role}"><strong>${role === "user" ? "Вы" : "AI-команда"}</strong><pre>${escapeHtml(text)}</pre></div>`;
-  ["chat", "aiPageChat"].forEach((id) => {
-    const node = document.getElementById(id);
-    if (!node) return;
-    node.insertAdjacentHTML("beforeend", html);
-    node.scrollTop = node.scrollHeight;
-  });
+async function generateMinutes() {
+  const meeting = (state.collections.meetings || []).find((item) => item.id === state.selectedMeetingId) || (state.collections.meetings || [])[0];
+  if (!meeting) return toast("Сначала создайте встречу.");
+  try {
+    const result = await api("/api/workflows/meeting-minutes", { method: "POST", body: JSON.stringify(meeting) });
+    setText("minutesOutput", result.ai?.protocolUz || result.meetingMinute?.protocolUz || stringify(result));
+    await loadAll({ silent: true });
+    await refreshUsage();
+    toast("Протокол и задачи созданы.");
+  } catch (error) {
+    toast(`Протокол не создан: ${error.message}`);
+  }
 }
 
-function seedAssistantMessage() {
-  const node = $("#chat");
-  if (!node || node.children.length) return;
-  addChat("assistant", "Готов анализировать поручения, отчёты, риски и готовить официальные письма на узбекском латинском.");
+async function createDepartmentRequest() {
+  const department = (state.collections.departments || []).find((item) => item.id !== "D-000") || {};
+  try {
+    await api("/api/workflows/department-request", {
+      method: "POST",
+      body: JSON.stringify({
+        departmentId: department.id,
+        departmentName: department.name || "Отдел",
+        topic: "Запрос статуса по открытым задачам",
+        needed: "Предоставить текущий статус, проблемы и новый срок при задержке.",
+        dueDate: todayISO(1),
+        priority: "Средний",
+      }),
+    });
+    await loadAll({ silent: true });
+    await refreshUsage();
+    toast("Запрос, задача, форма и письмо созданы.");
+  } catch (error) {
+    toast(`Запрос не создан: ${error.message}`);
+  }
 }
 
-function renderCardGrid(id, items, render) {
-  const list = Array.isArray(items) ? items : [];
-  setHtml(id, list.map(render).join("") || emptyState("Пока нет данных."));
+async function createGmailDraft() {
+  const letter = (state.collections.letters || [])[0];
+  if (!letter) return toast("Сначала создайте письмо.");
+  try {
+    await api("/api/google/draft-email", { method: "POST", body: JSON.stringify({ to: letter.recipient, subject: letter.subject, body: letter.bodyUz }) });
+    toast("Gmail draft создан в mock/Google режиме.");
+  } catch (error) {
+    toast(`Gmail draft не создан: ${error.message}`);
+  }
 }
 
-function card(label, title, meta, chips = []) {
-  return `
-    <article class="card">
-      <span>${escapeHtml(label || "")}</span>
-      <strong>${escapeHtml(title || "")}</strong>
-      <p>${escapeHtml(meta || "")}</p>
-      <div>${chips.filter(Boolean).map((item) => badge(item, statusTone(item) || priorityTone(item) || riskTone(item))).join("")}</div>
-    </article>
-  `;
+async function refreshGoogle() {
+  try {
+    state.google = await api("/api/google/status");
+    renderGoogleStatus();
+    toast("Google Workspace статус обновлён.");
+  } catch (error) {
+    toast(`Google статус недоступен: ${error.message}`);
+  }
 }
 
-function queueRow(title, subtitle, status, tone) {
-  return `
-    <div class="queue-row">
-      <div><strong>${escapeHtml(title || "")}</strong><span>${escapeHtml(subtitle || "")}</span></div>
-      ${badge(status || "Новая", tone || statusTone(status))}
-    </div>
-  `;
+async function refreshUsage() {
+  try {
+    state.resourceUsage = await api("/api/resource-usage");
+    state.collections.apiKeys = state.resourceUsage.keys || state.collections.apiKeys || [];
+    renderSettingsPage();
+  } catch (error) {
+    toast(`Usage недоступен: ${error.message}`);
+  }
 }
 
-function buildMeetingPreview(meeting) {
-  if (!meeting) return "";
-  return [
-    "BAYONNOMA",
-    "",
-    `Mavzu: ${meeting.title}`,
-    `Vaqt: ${formatDate(meeting.date)} ${meeting.time || ""}`,
-    "",
-    "Kun tartibi:",
-    ...(meeting.agenda || []).map((item, index) => `${index + 1}. ${item}`),
-    "",
-    "Natija: uchrashuv yakunida mas'ullar, muddatlar va keyingi qadamlar aniqlashtiriladi.",
-  ].join("\n");
+async function checkApiKey(id) {
+  try {
+    const result = await api(`/api/api-keys/${id}/check`, { method: "POST", body: "{}" });
+    await loadAll({ silent: true });
+    toast(result.ok ? "Ключ подключён." : `Ключ не прошёл проверку: ${result.message}`);
+  } catch (error) {
+    toast(`Проверка не прошла: ${error.message}`);
+  }
 }
 
-function buildReportPreview(report) {
-  if (!report) return "";
-  return [
-    "RAHBARIYAT UCHUN QISQA XULOSA",
-    "",
-    `Hisobot: ${report.title}`,
-    `Holat: ${report.status}`,
-    `Tayyorlik darajasi: ${report.completeness || 0}%`,
-    "",
-    `To'ldirilishi kerak: ${(report.missing || []).join(", ") || "yo'q"}.`,
-  ].join("\n");
+async function exportReport(format) {
+  const report = (state.collections.reports || []).find((item) => item.id === state.selectedReportId);
+  if (!report) return toast("Выберите отчёт.");
+  try {
+    const blob = await api(`/api/export/${format}`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: report.title,
+        content: report.summary || report.content || buildReportPreview(report),
+        rows: state.collections.assignments || [],
+      }),
+    });
+    const extension = format === "csv" ? "csv" : format === "json" ? "json" : format === "doc" ? "doc" : "html";
+    downloadBlob(blob, `${safeName(report.title)}.${extension}`);
+  } catch (error) {
+    toast(`Экспорт не выполнен: ${error.message}`);
+  }
 }
 
-function targetTitle(item) {
-  if (!item) return "";
-  if (item.targetType === "letter") return (state.collections.letters || []).find((letter) => letter.id === item.targetId)?.subject || "Письмо";
-  if (item.targetType === "report") return (state.collections.reports || []).find((report) => report.id === item.targetId)?.title || "Отчёт";
-  return item.targetId || "Документ";
+function importReportTemplate() {
+  const template = (state.collections.reportTemplates || [])[0];
+  if (!template) return toast("Шаблонов нет.");
+  const form = $("#reportForm");
+  form.elements.title.value ||= template.title;
+  form.elements.content.value = (template.blocks || []).map((block) => `${block}:\n`).join("\n");
+  toast("Шаблон добавлен в форму отчёта.");
 }
 
-function personWithAvatar(name, seed = "") {
-  return `<span class="person"><i>${initials(name || seed)}</i>${escapeHtml(shortName(name || "Ответственный"))}</span>`;
+function fillSelects() {
+  setHtml("taskDepartment", (state.collections.departments || []).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""));
+  setHtml("taskOwner", (state.collections.employees || []).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""));
+  setHtml("reportType", (state.collections.reportTemplates || []).map((item) => `<option>${escapeHtml(item.title)}</option>`).join("") || "<option>Отчёт для директора</option>");
+  const due = $("#taskForm")?.elements.dueDate;
+  if (due && !due.value) due.value = todayISO();
+  const meetingDate = $("#meetingForm")?.elements.date;
+  if (meetingDate && !meetingDate.value) meetingDate.value = todayISO();
 }
 
-function meetingAvatars(meeting) {
-  const participants = meeting.participants || [];
-  const names = participants.map(departmentName).slice(0, 3);
-  return `${names.map((name) => `<i title="${escapeHtml(name)}">${initials(name)}</i>`).join("")}${participants.length > 3 ? `<b>+${participants.length - 3}</b>` : ""}`;
+function filteredTasks(forceFilter) {
+  const filter = forceFilter || state.taskFilter;
+  const today = todayISO();
+  return (state.collections.assignments || [])
+    .filter(matchesSearch)
+    .filter((item) => {
+      if (filter === "today") return item.dueDate === today;
+      if (filter === "overdue") return isOverdue(item);
+      if (filter === "risk") return item.riskLevel === "Высокий" || item.priority === "Высокий";
+      return true;
+    })
+    .sort((a, b) => executiveScore(b) - executiveScore(a));
 }
 
-function documentIcon(type = "") {
-  const value = type.toLowerCase();
-  if (value.includes("sheet") || value.includes("excel")) return "▦";
-  if (value.includes("pdf")) return "▧";
-  return "▣";
+function getMetrics() {
+  const tasks = state.collections.assignments || [];
+  const reports = state.collections.reports || [];
+  const letters = state.collections.letters || [];
+  return {
+    activeTasks: tasks.filter((item) => !isDone(item.status)).length,
+    todayTasks: tasks.filter((item) => item.dueDate === todayISO()).length,
+    overdueTasks: tasks.filter(isOverdue).length,
+    pendingReports: reports.filter((item) => item.status !== "Готов").length,
+    draftLetters: letters.filter((item) => item.status !== "Готово к отправке").length,
+  };
 }
 
-function departmentName(id) {
-  return (state.collections.departments || []).find((item) => item.id === id)?.name || id || "";
+function renderBadges() {
+  const metrics = getMetrics();
+  setBadge("navTasks", metrics.activeTasks);
+  setBadge("navReports", metrics.pendingReports);
+  setBadge("navLetters", metrics.draftLetters);
 }
 
-function employeeName(id) {
-  return (state.collections.employees || []).find((item) => item.id === id)?.name || id || "";
+function showView(view) {
+  state.activeView = view;
+  $$(".view").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
+  $$("#nav [data-view]").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function actorName(id) {
-  if (!id) return "Система";
-  return (state.collections.employees || []).find((item) => item.id === id)?.name || (id === "U-001" ? "Ассистент ГД" : id);
+function meetingsToday() {
+  return (state.collections.meetings || []).filter((item) => item.date === todayISO());
 }
 
-function initials(value = "") {
-  const parts = String(value).trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "•";
-  return parts.slice(0, 2).map((part) => part[0]).join("").toUpperCase();
-}
-
-function shortName(value = "") {
-  const parts = String(value).trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 3) return value;
-  return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`;
-}
-
-function sortByExecutivePriority(a, b) {
-  const score = (item) => (isOverdue(item) ? 100 : 0) + (item.riskLevel === "Высокий" ? 30 : 0) + (item.priority === "Высокий" ? 20 : 0) - daysUntil(item.dueDate);
-  return score(b) - score(a);
+function matchesSearch(item) {
+  if (!state.search) return true;
+  return JSON.stringify(item || {}).toLowerCase().includes(state.search);
 }
 
 function isDone(status = "") {
@@ -792,13 +791,149 @@ function isOverdue(item) {
   return item?.dueDate && item.dueDate < todayISO() && !isDone(item.status);
 }
 
+function executiveScore(item) {
+  return (isOverdue(item) ? 100 : 0) + (item.priority === "Высокий" ? 20 : 0) + (item.riskLevel === "Высокий" ? 25 : 0) - daysUntil(item.dueDate);
+}
+
 function daysUntil(value) {
   if (!value) return 999;
   return Math.ceil((new Date(`${value}T12:00:00`) - new Date(`${todayISO()}T12:00:00`)) / 86400000);
 }
 
-function daysOverdue(value) {
-  return Math.max(1, Math.abs(daysUntil(value)));
+function buildLocalBriefing() {
+  const metrics = getMetrics();
+  return `Сегодня в фокусе: ${metrics.activeTasks} активных задач, ${metrics.overdueTasks} просроченных, ${metrics.pendingReports} отчётов на проверке. Главный порядок дня - закрыть просрочки и подготовить короткую управленческую выжимку.`;
+}
+
+function nextActionText() {
+  const overdue = filteredTasks("overdue")[0];
+  return overdue ? `Следующее действие: запросить статус по задаче "${overdue.title}".` : "Следующее действие: проверить отчёты и подготовить письма.";
+}
+
+function buildMeetingPreview(meeting) {
+  if (!meeting) return "Выберите встречу или создайте новую.";
+  return [
+    "BAYONNOMA",
+    "",
+    `Mavzu: ${meeting.title}`,
+    `Vaqt: ${formatDate(meeting.date)} ${meeting.time || ""}`,
+    "",
+    "Kun tartibi:",
+    ...(meeting.agenda || []).map((item, index) => `${index + 1}. ${item}`),
+  ].join("\n");
+}
+
+function buildReportPreview(report) {
+  return [
+    "RAHBARIYAT UCHUN QISQA XULOSA",
+    "",
+    `Hisobot: ${report.title}`,
+    `Holat: ${report.status || "Черновик"}`,
+    `Tayyorlik: ${report.completeness || 0}%`,
+    "",
+    report.content || "Hisobot matni hali kiritilmagan.",
+  ].join("\n");
+}
+
+function metricCard(title, value, label, tone = "") {
+  return `<article class="mini-metric ${tone}"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(title)}</span><p>${escapeHtml(label)}</p></article>`;
+}
+
+function focusRow(label, title, meta, tone = "") {
+  return `<div class="focus-row ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(title)}</strong><p>${escapeHtml(meta)}</p></div>`;
+}
+
+function queueRow(title, meta, status, tone = "info") {
+  return `<div class="queue-row"><div><strong>${escapeHtml(title || "")}</strong><span>${escapeHtml(meta || "")}</span></div>${badge(status || "Новая", tone)}</div>`;
+}
+
+function card(label, title, meta, chips = [], collection = "", id = "") {
+  return `
+    <article class="card">
+      <span>${escapeHtml(label || "")}</span>
+      <strong>${escapeHtml(title || "")}</strong>
+      <p>${escapeHtml(meta || "")}</p>
+      <div>${chips.filter(Boolean).map((item) => badge(item, statusTone(item))).join("")}${collection ? `<span class="row-actions"><button data-edit="${collection}" data-id="${escapeHtml(id)}" type="button">Edit</button><button data-delete="${collection}" data-id="${escapeHtml(id)}" type="button">Del</button></span>` : ""}</div>
+    </article>
+  `;
+}
+
+function compactItem(title, meta) {
+  return `<div class="compact-item"><div><strong>${escapeHtml(title || "")}</strong><span>${escapeHtml(meta || "")}</span></div></div>`;
+}
+
+function person(name) {
+  return `<span class="person"><i>${initials(name)}</i>${escapeHtml(shortName(name))}</span>`;
+}
+
+function badge(text, tone = "muted") {
+  return `<span class="badge ${tone}">${escapeHtml(text || "")}</span>`;
+}
+
+function priorityTone(value = "") {
+  if (value === "Высокий" || value === "Высокая") return "danger";
+  if (value === "Средний" || value === "Средняя") return "warn";
+  return "ok";
+}
+
+function riskTone(value = "") {
+  return priorityTone(value);
+}
+
+function statusTone(value = "") {
+  if (["Готово", "Закрыто", "Утверждено", "Готово к отправке", "active", "ok"].includes(value)) return "ok";
+  if (["Просрочена", "Заблокирована", "Требует правок", "error"].includes(value)) return "danger";
+  if (["На проверке", "На согласовании", "Ждёт ответ", "Черновик", "В работе", "Новая"].includes(value)) return "info";
+  return priorityTone(value) || "muted";
+}
+
+function departmentName(id) {
+  return (state.collections.departments || []).find((item) => item.id === id)?.name || id || "";
+}
+
+function ownerName(id) {
+  return (state.collections.employees || []).find((item) => item.id === id)?.name || id || "Ответственный";
+}
+
+function formData(form) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function addChat(role, text) {
+  const node = $("#aiPageChat");
+  if (!node) return;
+  node.insertAdjacentHTML("beforeend", `<div class="message ${role}"><strong>${role === "user" ? "Вы" : "AI"}</strong><pre>${escapeHtml(text)}</pre></div>`);
+  node.scrollTop = node.scrollHeight;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function setBusy(message) {
+  const node = $("#toast");
+  if (!node) return;
+  if (message) {
+    toast(message, 1200);
+    return;
+  }
+  window.clearTimeout(toast.timer);
+  node.classList.remove("show");
+}
+
+function setStatus(id, text) {
+  setText(id, text);
+}
+
+function setDatePill() {
+  setText("datePill", new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", weekday: "long" }).format(new Date()));
 }
 
 function todayISO(offset = 0) {
@@ -812,69 +947,32 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${value}T12:00:00`));
 }
 
-function formatTime(value) {
-  if (!value) return "";
-  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
 function formatDateTime(value) {
   if (!value) return "";
   return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-function setDatePill() {
-  const value = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric", weekday: "long" }).format(new Date());
-  setText("datePill", value);
+function initials(value = "") {
+  const parts = String(value).trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts.slice(0, 2).map((part) => part[0]).join("").toUpperCase() : "U";
 }
 
-function nextMeetingText() {
-  const meeting = meetingsToday().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")))[0];
-  return meeting?.time ? `${meeting.time} следующая` : "Нет встреч";
+function shortName(value = "") {
+  const parts = String(value).trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 3) return value;
+  return `${parts[0]} ${parts[1][0]}.${parts[2][0]}.`;
 }
 
-function statusTone(value = "") {
-  if (["Готово", "Закрыто", "Утверждено", "Готово к отправке", "Активна"].includes(value)) return "ok";
-  if (["Просрочена", "Заблокирована", "Требует правок"].includes(value)) return "danger";
-  if (["На проверке", "На согласовании", "Ждёт ответ", "Черновик", "В работе", "Новая"].includes(value)) return "info";
-  return "muted";
+function safeName(value) {
+  return String(value || "export").replace(/[\\/:*?"<>|]+/g, "-");
 }
 
-function priorityTone(value = "") {
-  if (value === "Высокий" || value === "Высокая") return "danger";
-  if (value === "Средний" || value === "Средняя") return "warn";
-  return "ok";
-}
-
-function riskTone(value = "") {
-  if (value === "Высокий" || value === "Высокая") return "danger";
-  if (value === "Средний" || value === "Средняя") return "warn";
-  return "ok";
-}
-
-function badge(text, tone = "muted") {
-  return `<span class="badge ${tone}">${escapeHtml(text || "")}</span>`;
-}
-
-function emptyState(text) {
-  return `<div class="empty-state">${escapeHtml(text)}</div>`;
-}
-
-function translateAudit(action = "") {
-  const map = {
-    "seed.created": "Создана стартовая база",
-    "ai.briefing": "AI подготовил брифинг",
-    "ai.letter": "AI создал черновик письма",
-    "ai.risks": "AI проанализировал риски",
-  };
-  return map[action] || action || "Действие";
+function stringify(value) {
+  return JSON.stringify(value, null, 2);
 }
 
 function toCamel(name) {
   return name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-}
-
-function stringifyResult(value) {
-  return JSON.stringify(value, null, 2);
 }
 
 function setText(id, value) {
@@ -883,8 +981,7 @@ function setText(id, value) {
 }
 
 function setBadge(id, value) {
-  const node = document.getElementById(id);
-  if (node) node.textContent = value > 0 ? String(value) : "";
+  setText(id, value > 0 ? value : "");
 }
 
 function setHtml(id, value) {
@@ -892,13 +989,17 @@ function setHtml(id, value) {
   if (node) node.innerHTML = value || "";
 }
 
-function toast(message) {
+function emptyState(text) {
+  return `<div class="empty-state">${escapeHtml(text)}</div>`;
+}
+
+function toast(message, delay = 2800) {
   const node = $("#toast");
   if (!node) return;
   node.textContent = message;
   node.classList.add("show");
   window.clearTimeout(toast.timer);
-  toast.timer = window.setTimeout(() => node.classList.remove("show"), 2800);
+  toast.timer = window.setTimeout(() => node.classList.remove("show"), delay);
 }
 
 function escapeHtml(value) {

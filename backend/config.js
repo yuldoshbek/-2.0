@@ -26,6 +26,7 @@ function getConfig() {
     openaiModel: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     openaiApiBase: process.env.OPENAI_API_BASE || "https://api.openai.com/v1",
     googleMode: process.env.GOOGLE_MODE || "mock",
+    appSecret: process.env.APP_SECRET || "executive-control-center-local-secret",
   };
 }
 

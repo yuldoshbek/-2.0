@@ -1,6 +1,7 @@
 const { runAiTask } = require("./services/ai");
 const { createGoogleWorkspaceService } = require("./services/googleWorkspace");
 const { exportEntity } = require("./services/exporter");
+const { decryptSecret, encryptSecret, estimateTokens, maskSecret } = require("./services/secrets");
 
 const collections = new Set([
   "modules",
@@ -23,6 +24,8 @@ const collections = new Set([
   "knowledgeBase",
   "approvals",
   "workspaceLinks",
+  "apiKeys",
+  "aiUsage",
   "audit",
 ]);
 
@@ -33,6 +36,8 @@ const aliases = {
   "employee-report-forms": "employeeReportForms",
   "knowledge-base": "knowledgeBase",
   "workspace-links": "workspaceLinks",
+  "api-keys": "apiKeys",
+  "ai-usage": "aiUsage",
 };
 
 async function handleApiRequest(req, res, context) {
@@ -56,6 +61,7 @@ async function handleApiRequest(req, res, context) {
       modules: data.modules,
       dashboard: buildDashboard(data),
       google: await createGoogleWorkspaceService(context.config).status(),
+      resourceUsage: buildResourceUsage(data),
     });
     return;
   }
@@ -65,21 +71,26 @@ async function handleApiRequest(req, res, context) {
     return;
   }
 
+  if (parts[0] === "api-keys") {
+    if (parts[2] === "check") {
+      await handleApiKeyCheck(req, res, parts[1], context);
+      return;
+    }
+    await handleApiKeys(req, res, parts[1], context);
+    return;
+  }
+
+  if (parts[0] === "resource-usage" && req.method === "GET") {
+    sendJson(res, 200, buildResourceUsage(context.db.read()));
+    return;
+  }
+
   if (parts[0] === "ai" && req.method === "POST") {
     const task = parts[1] || "command";
     const payload = await readJson(req);
+    const startedAt = Date.now();
     const result = await runAiTask(task, payload, context);
-    context.db.transaction((data) => {
-      data.audit.push({
-        id: `AUD-AI-${Date.now()}`,
-        at: new Date().toISOString(),
-        actor: "U-001",
-        action: `ai.${task}`,
-        entityType: "ai",
-        entityId: task,
-        detail: JSON.stringify(payload).slice(0, 500),
-      });
-    }, "U-001", `ai.${task}`);
+    recordAiUsage(context, task, payload, result, startedAt);
     sendJson(res, 200, result);
     return;
   }
@@ -87,7 +98,9 @@ async function handleApiRequest(req, res, context) {
   if (parts[0] === "workflows" && req.method === "POST") {
     const workflow = parts[1];
     const payload = await readJson(req);
+    const startedAt = Date.now();
     const result = await handleWorkflow(workflow, payload, context);
+    recordAiUsage(context, `workflow.${workflow}`, payload, result, startedAt);
     sendJson(res, 200, result);
     return;
   }
@@ -120,6 +133,11 @@ async function handleApiRequest(req, res, context) {
 }
 
 async function handleCollection(req, res, collection, id, context) {
+  if (collection === "apiKeys") {
+    await handleApiKeys(req, res, id, context);
+    return;
+  }
+
   if (req.method === "GET") {
     if (id) {
       const item = context.db.get(collection, id);
@@ -153,6 +171,102 @@ async function handleCollection(req, res, collection, id, context) {
   }
 
   sendJson(res, 405, { error: "Method not allowed" });
+}
+
+async function handleApiKeys(req, res, id, context) {
+  if (req.method === "GET") {
+    if (id) {
+      const item = context.db.get("apiKeys", id);
+      sendJson(res, item ? 200 : 404, item ? sanitizeApiKey(item) : { error: "Not found" });
+      return;
+    }
+    sendJson(res, 200, context.db.list("apiKeys").map(sanitizeApiKey));
+    return;
+  }
+
+  if (req.method === "POST") {
+    const payload = await readJson(req);
+    if (!payload.provider || !payload.token) {
+      sendJson(res, 400, { error: "Provider and token are required" });
+      return;
+    }
+    const record = context.db.insert("apiKeys", {
+      name: payload.name || `${payload.provider} key`,
+      provider: payload.provider,
+      model: payload.model || "",
+      tokenEncrypted: encryptSecret(payload.token, context.config.appSecret),
+      maskedKey: maskSecret(payload.token),
+      status: "active",
+      validationStatus: "unchecked",
+      limitMonthly: Number(payload.limitMonthly || 0),
+      budgetMonthly: Number(payload.budgetMonthly || 0),
+      lastCheckedAt: null,
+    });
+    sendJson(res, 201, sanitizeApiKey(record));
+    return;
+  }
+
+  if (req.method === "PATCH" && id) {
+    const payload = await readJson(req);
+    const patch = { ...payload };
+    delete patch.token;
+    if (payload.token) {
+      patch.tokenEncrypted = encryptSecret(payload.token, context.config.appSecret);
+      patch.maskedKey = maskSecret(payload.token);
+      patch.validationStatus = "unchecked";
+    }
+    const item = context.db.update("apiKeys", id, patch);
+    sendJson(res, item ? 200 : 404, item ? sanitizeApiKey(item) : { error: "Not found" });
+    return;
+  }
+
+  if (req.method === "DELETE" && id) {
+    const deleted = context.db.remove("apiKeys", id);
+    sendJson(res, deleted ? 200 : 404, { deleted });
+    return;
+  }
+
+  sendJson(res, 405, { error: "Method not allowed" });
+}
+
+async function handleApiKeyCheck(req, res, id, context) {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
+  }
+  const item = context.db.get("apiKeys", id);
+  if (!item) {
+    sendJson(res, 404, { error: "Not found" });
+    return;
+  }
+  let validationStatus = item.tokenEncrypted ? "ok" : "missing";
+  let message = validationStatus === "ok" ? "Key is stored and ready to use." : "Key is missing.";
+
+  if (validationStatus === "ok" && item.provider === "openai") {
+    try {
+      const token = decryptSecret(item.tokenEncrypted, context.config.appSecret);
+      const response = await fetch(`${context.config.openaiApiBase}/models`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      validationStatus = response.ok ? "ok" : "error";
+      message = response.ok ? "OpenAI connection is working." : `OpenAI returned HTTP ${response.status}.`;
+    } catch (error) {
+      validationStatus = "error";
+      message = error.message;
+    }
+  }
+
+  const updated = context.db.update("apiKeys", id, {
+    validationStatus,
+    lastCheckedAt: new Date().toISOString(),
+    status: validationStatus === "ok" ? "active" : "error",
+  });
+  sendJson(res, 200, {
+    ok: validationStatus === "ok",
+    key: sanitizeApiKey(updated),
+    message,
+  });
 }
 
 async function handleGoogle(req, res, parts, context) {
@@ -345,6 +459,74 @@ function findDepartment(data, id, name) {
   if (id) return data.departments.find((item) => item.id === id);
   if (!name) return null;
   return data.departments.find((item) => item.name.toLowerCase() === String(name).toLowerCase()) || null;
+}
+
+function sanitizeApiKey(item) {
+  if (!item) return item;
+  const { tokenEncrypted, ...safe } = item;
+  return {
+    ...safe,
+    hasSecret: Boolean(tokenEncrypted),
+  };
+}
+
+function recordAiUsage(context, task, payload, result, startedAt) {
+  const now = new Date().toISOString();
+  const promptTokens = estimateTokens(payload);
+  const completionTokens = estimateTokens(result);
+  const totalTokens = promptTokens + completionTokens;
+  const provider = result?.provider || context.config.aiProvider || "mock";
+  const costUsd = provider === "mock" ? 0 : Number(((totalTokens / 1000000) * 0.6).toFixed(6));
+
+  context.db.transaction((data) => {
+    data.aiUsage = data.aiUsage || [];
+    data.aiUsage.push({
+      id: `AIU-${Date.now()}`,
+      at: now,
+      task,
+      provider,
+      model: context.config.openaiModel || "",
+      status: result?.error ? "error" : "ok",
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      costUsd,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      error: result?.error || "",
+    });
+    data.audit.push({
+      id: `AUD-AI-${Date.now()}`,
+      at: now,
+      actor: "U-001",
+      action: `ai.${task}`,
+      entityType: "ai",
+      entityId: task,
+      detail: JSON.stringify(payload).slice(0, 500),
+    });
+  }, "U-001", `ai.${task}`);
+}
+
+function buildResourceUsage(data) {
+  const usage = data.aiUsage || [];
+  const apiKeys = (data.apiKeys || []).map(sanitizeApiKey);
+  const totalTokens = usage.reduce((sum, item) => sum + Number(item.totalTokens || 0), 0);
+  const costUsd = usage.reduce((sum, item) => sum + Number(item.costUsd || 0), 0);
+  const errors = usage.filter((item) => item.status === "error");
+  const activeKey = apiKeys.find((item) => item.status === "active") || null;
+  return {
+    requests: usage.length,
+    totalTokens,
+    costUsd: Number(costUsd.toFixed(6)),
+    errors: errors.length,
+    activeKey,
+    keys: apiKeys,
+    history: usage.slice(-50).reverse(),
+    warnings: [
+      ...(errors.length ? [`${errors.length} AI errors recorded.`] : []),
+      ...(activeKey?.budgetMonthly && costUsd > activeKey.budgetMonthly ? ["Monthly budget limit exceeded."] : []),
+      ...(activeKey?.limitMonthly && usage.length > activeKey.limitMonthly ? ["Monthly request limit exceeded."] : []),
+    ],
+  };
 }
 
 async function readJson(req) {

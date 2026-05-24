@@ -8,216 +8,276 @@
     <script defer src="app.js"></script>
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="Основная навигация">
+    <div class="app-shell simple-shell">
+      <aside class="sidebar compact-sidebar" aria-label="Основная навигация">
         <div class="brand">
           <div class="brand-crest">ECC</div>
           <div>
-            <strong>EXECUTIVE</strong>
-            <span>CONTROL CENTER</span>
+            <strong>Executive OS</strong>
+            <span>личный рабочий центр</span>
           </div>
         </div>
 
         <nav class="nav" id="nav">
-          <button class="active" data-view="dashboard" type="button"><span>⌂</span>Главная</button>
-          <button data-view="assignments" type="button"><span>☑</span>Поручения <b id="navAssignments">0</b></button>
-          <button data-view="employeeTasks" type="button"><span>▤</span>Задачи</button>
-          <button data-view="meetings" type="button"><span>□</span>Встречи</button>
-          <button data-view="reports" type="button"><span>▥</span>Отчёты <b id="navReports">0</b></button>
-          <button data-view="letters" type="button"><span>✉</span>Письма <b id="navLetters">0</b></button>
-          <button data-view="complaints" type="button"><span>♢</span>Жалобы <b id="navComplaints">0</b></button>
-          <button data-view="documents" type="button"><span>▱</span>Документы</button>
-          <button data-view="decisions" type="button"><span>▣</span>Решения</button>
-          <button data-view="risks" type="button"><span>△</span>Риски <b id="navRisks">0</b></button>
-          <button data-view="departments" type="button"><span>◇</span>Отделы</button>
-          <button data-view="employees" type="button"><span>♙</span>Сотрудники</button>
-          <button data-view="knowledge" type="button"><span>▥</span>База знаний</button>
-          <button data-view="ai" type="button"><span>✦</span>AI-команда</button>
-          <button data-view="audit" type="button"><span>◷</span>Аудит</button>
-          <button data-view="approvals" type="button"><span>⚭</span>Согласования <b id="navApprovals">0</b></button>
-          <button data-view="settings" type="button"><span>⚙</span>Настройки</button>
+          <button class="active" data-view="dashboard" type="button"><span>D</span>Dashboard</button>
+          <button data-view="tasks" type="button"><span>T</span>Tasks <b id="navTasks"></b></button>
+          <button data-view="meetings" type="button"><span>M</span>Meetings</button>
+          <button data-view="reports" type="button"><span>R</span>Reports <b id="navReports"></b></button>
+          <button data-view="letters" type="button"><span>L</span>Letters <b id="navLetters"></b></button>
+          <button data-view="documents" type="button"><span>F</span>Documents</button>
+          <button data-view="ai" type="button"><span>AI</span>AI Assistant</button>
+          <button data-view="settings" type="button"><span>S</span>Settings</button>
         </nav>
 
         <div class="quick-actions">
-          <span>Быстрые действия</span>
-          <button data-action="new-assignment" type="button">＋ Создать поручение</button>
-          <button data-action="department-request" type="button">◎ Запрос в отдел</button>
-          <button data-action="new-letter" type="button">✉ Создать письмо</button>
-          <button data-action="new-meeting" type="button">□ Новая встреча</button>
-          <button data-action="new-document" type="button">▱ Загрузить документ</button>
+          <span>Быстро</span>
+          <button data-action="new-task" type="button">+ Задача</button>
+          <button data-action="daily-briefing" type="button">AI-брифинг</button>
+          <button data-action="new-report" type="button">+ Отчёт</button>
+          <button data-action="new-letter" type="button">+ Письмо</button>
         </div>
       </aside>
 
       <main class="workspace">
-        <header class="topbar">
+        <header class="topbar simple-topbar">
           <button class="menu-button" type="button" aria-label="Меню">☰</button>
           <label class="global-search">
             <span>⌕</span>
-            <input id="searchInput" type="search" placeholder="Поиск по системе, задачам, документам, людям..." />
+            <input id="searchInput" type="search" placeholder="Поиск по задачам, отчётам, письмам, документам..." />
             <kbd>Ctrl + K</kbd>
           </label>
-          <div class="date-pill" id="datePill">24 мая 2026, воскресенье</div>
-          <button class="top-icon" type="button" aria-label="Уведомления">♧<b id="notificationCount">0</b></button>
-          <button class="top-icon" type="button" aria-label="Письма">✉</button>
-          <div class="profile">
-            <div class="avatar">АГ</div>
-            <div>
-              <strong>Ассистент ГД</strong>
-              <span>Администратор</span>
-            </div>
-          </div>
-          <button class="create-button" id="createButton" type="button">＋ Создать</button>
+          <div class="date-pill" id="datePill">сегодня</div>
+          <button class="top-icon" data-action="refresh" type="button" aria-label="Обновить">↻</button>
+          <button class="create-button" id="createButton" type="button">+ Создать</button>
         </header>
 
         <section class="view active" data-view="dashboard">
-          <div class="dashboard-grid">
-            <section class="panel director-brief">
-              <div class="panel-head">
-                <h2>Брифинг директора</h2>
-                <span>07:30</span>
-              </div>
-              <div id="directorBrief"></div>
-              <div class="brief-footer">
-                <span>AI-выжимка готова</span>
-                <button data-action="daily-briefing" type="button">Открыть</button>
-              </div>
-            </section>
-
-            <div class="kpi-grid" id="kpiGrid"></div>
-
-            <section class="panel priority-panel">
-              <div class="panel-head">
-                <h2>Приоритетные поручения</h2>
-                <button data-jump="assignments" type="button">Все поручения →</button>
-              </div>
-              <div class="task-table" id="priorityAssignments"></div>
-            </section>
-
-            <section class="panel department-panel">
-              <div class="panel-head">
-                <h2>Статус отделов</h2>
-                <button data-jump="departments" type="button">Все отделы →</button>
-              </div>
-              <div class="department-table" id="departmentStatus"></div>
-            </section>
-
-            <section class="panel overdue-panel">
-              <div class="panel-head">
-                <h2>Просроченные задачи</h2>
-                <button data-jump="assignments" type="button">Все просроченные →</button>
-              </div>
-              <div class="compact-table" id="overdueList"></div>
-            </section>
-
-            <section class="panel meetings-panel">
-              <div class="panel-head">
-                <h2>Встречи сегодня</h2>
-                <button data-jump="meetings" type="button">Календарь →</button>
-              </div>
-              <div class="meeting-list" id="meetingTimeline"></div>
-            </section>
-
-            <section class="panel ai-panel">
-              <div class="panel-head">
-                <h2>AI-команда <span class="new-pill">Новое</span></h2>
-                <div class="tool-icons">⚙ ◱ ↗</div>
-              </div>
-              <form id="assistantForm" class="ai-command">
-                <input name="prompt" placeholder="Спросите что угодно о задачах, отчётах, рисках..." />
-                <button type="submit">➤</button>
-              </form>
-              <div class="ai-shortcuts">
-                <button data-prompt="Сделай сводку дня" type="button">Сводка дня</button>
-                <button data-prompt="Покажи просроченные задачи" type="button">Просроченные задачи</button>
-                <button data-prompt="Найди риски по проектам" type="button">Риски по проектам</button>
-                <button data-prompt="Проанализируй отчёты" type="button">Анализ отчётов</button>
-                <button data-prompt="Подготовь брифинг директору" type="button">Подготовить брифинг</button>
-                <button data-action="department-request" type="button">Запрос в отдел</button>
-              </div>
-              <div class="chat" id="chat"></div>
-            </section>
-
-            <section class="panel reports-panel">
-              <div class="panel-head">
-                <h2>Отчёты на проверке</h2>
-                <button data-jump="reports" type="button">Все отчёты →</button>
-              </div>
-              <div class="card-list" id="reportsQueue"></div>
-            </section>
-
-            <section class="panel complaints-panel">
-              <div class="panel-head">
-                <h2>Жалобы и обращения</h2>
-                <button data-jump="complaints" type="button">Все жалобы →</button>
-              </div>
-              <div class="card-list" id="complaintsQueue"></div>
-            </section>
-
-            <section class="panel approvals-panel">
-              <div class="panel-head">
-                <h2>Согласования</h2>
-                <button data-jump="approvals" type="button">Все согласования →</button>
-              </div>
-              <div class="card-list" id="approvalQueue"></div>
-            </section>
-
-            <section class="panel letters-panel">
-              <div class="panel-head">
-                <h2>Черновик письма <span>(узбекский латинский)</span></h2>
-              </div>
-              <pre id="letterPreview" class="letter-preview"></pre>
-            </section>
-
-            <section class="panel docs-panel">
-              <div class="panel-head">
-                <h2>Последние документы</h2>
-                <button data-jump="documents" type="button">Все документы →</button>
-              </div>
-              <div class="document-list" id="documentList"></div>
-            </section>
-
-            <section class="panel activity-panel">
-              <div class="panel-head">
-                <h2>Аудит и активность</h2>
-              </div>
-              <div class="activity-timeline" id="activityTimeline"></div>
-            </section>
-          </div>
-        </section>
-
-        <section class="view" data-view="assignments">
-          <div class="page-panel">
+          <div class="page-panel simple-page">
             <div class="page-head">
               <div>
-                <span>Контроль исполнения</span>
-                <h1>Поручения</h1>
+                <span>Сегодня</span>
+                <h1>Dashboard</h1>
               </div>
-              <div class="filters" id="assignmentFilters">
-                <button class="active" data-filter="all" type="button">Все</button>
-                <button data-filter="today" type="button">Сегодня</button>
-                <button data-filter="overdue" type="button">Просрочено</button>
-                <button data-filter="risk" type="button">Высокий риск</button>
+              <div class="header-actions">
+                <button data-action="daily-briefing" type="button">AI-брифинг</button>
+                <button data-action="refresh" type="button">Обновить</button>
               </div>
             </div>
-            <div class="task-table full-table" id="assignmentTable"></div>
+            <div class="metric-strip" id="dashboardMetrics"></div>
+            <div class="work-grid">
+              <section class="panel panel-span-2">
+                <div class="panel-head"><h2>Что требует внимания</h2><button data-jump="tasks" type="button">Открыть Tasks</button></div>
+                <div id="todayFocus" class="focus-list"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>AI-брифинг</h2><span id="aiBriefStatus">готов</span></div>
+                <div id="directorBrief"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Встречи</h2><button data-jump="meetings" type="button">Все</button></div>
+                <div id="meetingTimeline" class="meeting-list"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Отчёты</h2><button data-jump="reports" type="button">Все</button></div>
+                <div id="reportsQueue" class="card-list"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Риски и жалобы</h2><button data-jump="tasks" type="button">Контроль</button></div>
+                <div id="riskComplaintQueue" class="card-list"></div>
+              </section>
+            </div>
           </div>
         </section>
 
-        <section class="view" data-view="employeeTasks"><div class="page-panel"><h1>Задачи сотрудников</h1><div class="card-grid" id="employeeTasks"></div></div></section>
-        <section class="view" data-view="meetings"><div class="page-panel"><h1>Встречи</h1><div class="card-grid" id="meetingsList"></div><pre class="document-output" id="minutesOutput"></pre></div></section>
-        <section class="view" data-view="reports"><div class="page-panel"><h1>Отчёты</h1><div class="card-grid" id="reportsList"></div><pre class="document-output" id="reportOutput"></pre></div></section>
-        <section class="view" data-view="letters"><div class="page-panel"><h1>Письма</h1><div class="two-column"><div class="card-grid" id="lettersList"></div><pre class="document-output" id="letterOutput"></pre></div></div></section>
-        <section class="view" data-view="complaints"><div class="page-panel"><h1>Жалобы и обратная связь</h1><div class="card-grid" id="complaintsList"></div></div></section>
-        <section class="view" data-view="documents"><div class="page-panel"><h1>Документы</h1><div class="card-grid" id="documentsList"></div><div class="integration-strip" id="googleStatus"></div></div></section>
-        <section class="view" data-view="decisions"><div class="page-panel"><h1>Решения</h1><div class="card-grid" id="decisionsList"></div></div></section>
-        <section class="view" data-view="risks"><div class="page-panel"><h1>Риски</h1><div class="card-grid" id="risksList"></div><h2>Напоминания</h2><div class="card-grid" id="remindersList"></div></div></section>
-        <section class="view" data-view="departments"><div class="page-panel"><h1>Отделы</h1><div class="card-grid" id="departmentsList"></div></div></section>
-        <section class="view" data-view="employees"><div class="page-panel"><h1>Сотрудники</h1><div class="card-grid" id="employeesList"></div></div></section>
-        <section class="view" data-view="knowledge"><div class="page-panel"><h1>База знаний</h1><div class="card-grid" id="knowledgeList"></div></div></section>
-        <section class="view" data-view="ai"><div class="page-panel"><h1>AI-команда</h1><div class="chat full-chat" id="aiPageChat"></div></div></section>
-        <section class="view" data-view="audit"><div class="page-panel"><h1>Аудит</h1><div class="audit-list" id="auditList"></div></div></section>
-        <section class="view" data-view="approvals"><div class="page-panel"><h1>Согласования</h1><div class="card-grid" id="approvalsList"></div></div></section>
-        <section class="view" data-view="settings"><div class="page-panel"><h1>Настройки</h1><p class="muted">Backend: <span id="backendStatus">проверка...</span></p></div></section>
+        <section class="view" data-view="tasks">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div>
+                <span>Поручения, задачи, риски, напоминания</span>
+                <h1>Tasks</h1>
+              </div>
+              <div class="header-actions">
+                <button data-action="new-task" type="button">+ Задача</button>
+                <button data-action="delay-analysis" type="button">Анализ задержек</button>
+              </div>
+            </div>
+            <form class="quick-form" id="taskForm">
+              <input name="title" placeholder="Новая задача или поручение" required />
+              <select name="departmentId" id="taskDepartment"></select>
+              <select name="ownerId" id="taskOwner"></select>
+              <input name="dueDate" type="date" required />
+              <select name="priority">
+                <option>Средний</option>
+                <option>Высокий</option>
+                <option>Низкий</option>
+              </select>
+              <button type="submit">Сохранить</button>
+            </form>
+            <div class="filters" id="taskFilters">
+              <button class="active" data-filter="all" type="button">Все</button>
+              <button data-filter="today" type="button">Сегодня</button>
+              <button data-filter="overdue" type="button">Просрочено</button>
+              <button data-filter="risk" type="button">Риск</button>
+            </div>
+            <div class="task-table full-table" id="taskTable"></div>
+            <div class="work-grid two">
+              <section class="panel">
+                <div class="panel-head"><h2>Жалобы</h2></div>
+                <div id="complaintsList" class="card-list"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Напоминания</h2></div>
+                <div id="remindersList" class="card-list"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="meetings">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div><span>Повестка, заметки, протоколы</span><h1>Meetings</h1></div>
+              <div class="header-actions"><button data-action="meeting-prep" type="button">Подготовка</button><button data-action="generate-minutes" type="button">Протокол</button></div>
+            </div>
+            <div class="two-column">
+              <div>
+                <form class="stack-form" id="meetingForm">
+                  <input name="title" placeholder="Тема встречи" required />
+                  <div class="form-row"><input name="date" type="date" required /><input name="time" type="time" /></div>
+                  <textarea name="notes" rows="5" placeholder="Заметки встречи"></textarea>
+                  <button type="submit">Сохранить встречу</button>
+                </form>
+                <div class="card-grid one" id="meetingsList"></div>
+              </div>
+              <pre class="document-output" id="minutesOutput"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="reports">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div><span>Список, генератор, шаблоны, экспорт</span><h1>Reports</h1></div>
+              <div class="header-actions"><button data-action="new-report" type="button">+ Отчёт</button><button data-action="report-summary" type="button">AI-выжимка</button></div>
+            </div>
+            <div class="two-column reports-layout">
+              <div>
+                <form class="stack-form" id="reportForm">
+                  <input name="title" placeholder="Название отчёта" required />
+                  <select name="type" id="reportType"></select>
+                  <textarea name="content" rows="7" placeholder="Текст, данные, выводы, риски"></textarea>
+                  <div class="form-row"><button type="submit">Сохранить отчёт</button><button data-action="import-template" type="button">Импорт шаблона</button></div>
+                </form>
+                <div class="card-grid one" id="reportsList"></div>
+              </div>
+              <div>
+                <div class="export-bar">
+                  <button data-export="html" type="button">PDF/печать</button>
+                  <button data-export="csv" type="button">Excel CSV</button>
+                  <button data-export="json" type="button">JSON</button>
+                  <button data-export="doc" type="button">Word</button>
+                </div>
+                <pre class="document-output" id="reportOutput"></pre>
+                <div class="subsection"><h2>Шаблоны и формы сотрудников</h2><div id="reportTemplatesList" class="compact-stack"></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="letters">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div><span>Русская инструкция → официальный узбекский латинский</span><h1>Letters</h1></div>
+              <div class="header-actions"><button data-action="department-request" type="button">Запрос в отдел</button><button data-action="gmail-draft" type="button">Gmail draft</button></div>
+            </div>
+            <div class="two-column">
+              <form class="stack-form" id="letterForm">
+                <input name="recipient" placeholder="Адресат" required />
+                <input name="subject" placeholder="Тема письма" />
+                <textarea name="instruction" rows="8" placeholder="Напишите задачу на русском. AI подготовит письмо на узбекском латинском." required></textarea>
+                <button type="submit">Сгенерировать письмо</button>
+              </form>
+              <div>
+                <pre class="document-output" id="letterOutput"></pre>
+                <div class="card-grid one" id="lettersList"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="documents">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div><span>Файлы, шаблоны, инструкции, база знаний</span><h1>Documents</h1></div>
+              <div class="header-actions"><button data-action="new-document" type="button">+ Документ</button></div>
+            </div>
+            <form class="quick-form" id="documentForm">
+              <input name="title" placeholder="Название документа или шаблона" required />
+              <select name="type"><option>Google Docs</option><option>PDF</option><option>DOCX</option><option>Google Sheets</option><option>Template</option></select>
+              <select name="status"><option>Черновик</option><option>На проверке</option><option>Утверждено</option></select>
+              <button type="submit">Сохранить</button>
+            </form>
+            <div class="work-grid two">
+              <section class="panel"><div class="panel-head"><h2>Документы</h2></div><div class="card-grid one" id="documentsList"></div></section>
+              <section class="panel"><div class="panel-head"><h2>База знаний</h2></div><div class="card-grid one" id="knowledgeList"></div></section>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="ai">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div><span>Генерация, анализ, перевод, выжимки</span><h1>AI Assistant</h1></div>
+              <div class="header-actions"><span id="aiRunStatus" class="status-dot">готов</span></div>
+            </div>
+            <form id="assistantForm" class="ai-command wide-command">
+              <input name="prompt" placeholder="Например: подготовь письмо, сделай выжимку отчёта, найди риски..." />
+              <button type="submit">Выполнить</button>
+            </form>
+            <div class="ai-shortcuts">
+              <button data-prompt="Сделай краткий брифинг дня для директора" type="button">Брифинг дня</button>
+              <button data-prompt="Покажи просроченные задачи и причины задержек" type="button">Просрочки</button>
+              <button data-prompt="Проанализируй риски по открытым задачам" type="button">Риски</button>
+              <button data-prompt="Подготовь официальное письмо на узбекском латинском" type="button">Письмо</button>
+            </div>
+            <div class="chat full-chat" id="aiPageChat"></div>
+          </div>
+        </section>
+
+        <section class="view" data-view="settings">
+          <div class="page-panel simple-page">
+            <div class="page-head">
+              <div><span>Google Workspace, ключи, лимиты, аудит</span><h1>Settings</h1></div>
+              <div class="header-actions"><button data-action="refresh-google" type="button">Обновить Google</button><button data-action="refresh-usage" type="button">Обновить usage</button></div>
+            </div>
+            <div class="settings-grid">
+              <section class="panel">
+                <div class="panel-head"><h2>API Keys</h2><span id="apiKeyStatus">локально</span></div>
+                <form class="stack-form" id="apiKeyForm">
+                  <select name="provider"><option value="openai">OpenAI</option><option value="google">Google</option><option value="custom">Custom</option></select>
+                  <input name="name" placeholder="Название ключа" />
+                  <input name="model" placeholder="Модель / назначение" />
+                  <input name="token" type="password" placeholder="API key или token" required />
+                  <div class="form-row"><input name="limitMonthly" type="number" min="0" placeholder="Лимит запросов" /><input name="budgetMonthly" type="number" min="0" step="0.01" placeholder="Бюджет $" /></div>
+                  <button type="submit">Сохранить ключ</button>
+                </form>
+                <div id="apiKeysList" class="compact-stack"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Resource Usage</h2><span id="usageStatus">готов</span></div>
+                <div id="resourceUsage" class="usage-panel"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Google Workspace</h2><span id="backendStatus">проверка...</span></div>
+                <div class="integration-strip" id="googleStatus"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head"><h2>Audit</h2></div>
+                <div class="audit-list" id="auditList"></div>
+              </section>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 

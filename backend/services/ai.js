@@ -1,12 +1,26 @@
 const { officialDepartmentRequest, officialUzbekLetter, translateSimple } = require("./language");
+const { decryptSecret } = require("./secrets");
 
 async function runAiTask(task, payload, context) {
-  if (context.config.aiProvider === "openai" && context.config.openaiApiKey) {
-    const live = await tryOpenAi(task, payload, context);
+  const effectiveConfig = getEffectiveAiConfig(context);
+  if (effectiveConfig.aiProvider === "openai" && effectiveConfig.openaiApiKey) {
+    const live = await tryOpenAi(task, payload, { ...context, config: effectiveConfig });
     if (live.ok) return live.data;
   }
 
   return mockAi(task, payload, context);
+}
+
+function getEffectiveAiConfig(context) {
+  const data = context.db.read();
+  const activeKey = (data.apiKeys || []).find((item) => item.status === "active" && item.provider === "openai" && item.tokenEncrypted);
+  if (!activeKey) return context.config;
+  return {
+    ...context.config,
+    aiProvider: "openai",
+    openaiApiKey: decryptSecret(activeKey.tokenEncrypted, context.config.appSecret),
+    openaiModel: activeKey.model || context.config.openaiModel,
+  };
 }
 
 async function tryOpenAi(task, payload, context) {

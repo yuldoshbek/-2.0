@@ -198,6 +198,8 @@ function createSeedData() {
       { id: "W-002", module: "googleWorkspace", title: "Черновики писем", provider: "Gmail", status: "mock", lastSyncAt: null },
       { id: "W-003", module: "googleWorkspace", title: "Документы и отчёты", provider: "Google Drive", status: "mock", lastSyncAt: null },
     ],
+    apiKeys: [],
+    aiUsage: [],
     audit: [
       { id: "AUD-001", at: new Date().toISOString(), actor: "U-001", action: "seed.created", entityType: "system", entityId: "ECC", detail: "Создана стартовая база проекта." },
     ],

@@ -9,6 +9,7 @@ pnpm-debug.log*
 
 data/database.json
 data/*.backup.json
+output/
 
 *.log
 .DS_Store

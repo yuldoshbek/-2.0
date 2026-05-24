@@ -20,6 +20,8 @@ const collectionPrefixes = {
   approvals: "APR",
   audit: "AUD",
   workspaceLinks: "W",
+  apiKeys: "KEY",
+  aiUsage: "AIU",
 };
 
 function createDatabase(filePath) {

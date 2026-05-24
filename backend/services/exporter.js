@@ -25,6 +25,24 @@ function exportEntity(format, payload) {
     };
   }
 
+  if (format === "doc") {
+    const body = [
+      "<!doctype html>",
+      "<html><head><meta charset=\"utf-8\"><title>",
+      escapeHtml(title),
+      "</title></head><body>",
+      `<h1>${escapeHtml(title)}</h1>`,
+      `<p>Exported at: ${escapeHtml(now)}</p>`,
+      `<pre style=\"white-space:pre-wrap;font-family:Segoe UI,Arial,sans-serif\">${escapeHtml(payload.content || JSON.stringify(payload, null, 2))}</pre>`,
+      "</body></html>",
+    ].join("");
+    return {
+      contentType: "application/msword; charset=utf-8",
+      filename: safeName(`${title}.doc`),
+      body,
+    };
+  }
+
   const html = [
     "<!doctype html>",
     "<html><head><meta charset=\"utf-8\"><title>",
